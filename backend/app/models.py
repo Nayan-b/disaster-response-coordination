@@ -190,6 +190,8 @@ class PopulationEstimate(BaseModel):
     resolution: str
     # Sanity-check handles: a wildly wrong pixel count usually means the geometry or CRS is off.
     pixels_counted: int
+    # Pixels INSIDE the polygon carrying no data — a genuine coverage gap. Pixels outside the
+    # polygon are excluded from this count, so it is not inflated by the bbox/polygon difference.
     nodata_pixels_skipped: int = 0
     per_country: dict[str, float] = Field(default_factory=dict)
     provenance: Provenance
