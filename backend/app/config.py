@@ -64,7 +64,10 @@ GDACS_GEOMETRY_URL = "https://www.gdacs.org/gdacsapi/api/polygons/getgeometry"
 CMR_STAC_BASE = "https://cmr.earthdata.nasa.gov/stac"
 # The MODIS/VIIRS near-real-time global flood products live under this CMR provider.
 CMR_FLOOD_PROVIDER = "LANCEMODIS"
-CMR_DEFAULT_FLOOD_COLLECTION = "MCDWD_L3_NRT_6.1"
+# The 3-day composite, chosen as the default for two reasons: it serves GeoTIFF (the bare
+# MCDWD_L3_NRT_6.1 collection serves HDF, which needs extra tooling to read), and a 3-day window
+# survives cloud cover better than a 1-day one. It also pairs with the GIBS 3-day layer below.
+CMR_DEFAULT_FLOOD_COLLECTION = "MCDWD_L3_F3_NRT_6.1"
 
 GIBS_TILE_BASE = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best"
 GIBS_DEFAULT_FLOOD_LAYER = "MODIS_Combined_Flood_3-Day"

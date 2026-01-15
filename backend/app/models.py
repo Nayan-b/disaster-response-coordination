@@ -149,6 +149,8 @@ class ImageryGranule(BaseModel):
     # Coarse 10x10-degree product tiles — a match does not mean the imagery is framed on the event.
     bbox: tuple[float, float, float, float] | None = None
     data_href: str | None = None
+    # "tif" for the F1/F2/F3/F1C composite collections, "hdf" for the base MCDWD_L3_NRT collection.
+    data_format: str | None = None
     browse_href: str | None = None
     metadata_href: str | None = None
 
