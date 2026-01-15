@@ -202,6 +202,27 @@ class PopulationEstimate(BaseModel):
         return bool(self.iso3_missing)
 
 
+class ToolCall(BaseModel):
+    """One tool invocation and its result — the unit of evidence for fact-checking.
+
+    The Allocation agent may only state figures that appear in a successful `ToolCall.result`. The
+    Fact-Check agent enforces that by matching claims against these records, so this is the audit
+    trail that makes the guardrail mechanical rather than aspirational.
+    """
+
+    call_id: str
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    called_at: datetime
+    ok: bool
+
+    def describe(self) -> str:
+        status = "ok" if self.ok else f"unavailable: {self.result.get('reason', '?')}"
+        args = ", ".join(f"{k}={v}" for k, v in self.arguments.items() if v is not None)
+        return f"{self.call_id} {self.tool}({args}) → {status} @ {self.called_at:%Y-%m-%d %H:%M:%SZ}"
+
+
 class EventReport(BaseModel):
     """All three sources for one event, assembled for human review.
 
