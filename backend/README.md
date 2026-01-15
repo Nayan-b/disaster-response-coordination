@@ -14,6 +14,41 @@ whatever the data layer gets wrong.
 | `app/sources/cmr_stac.py` | NASA CMR-STAC (`LANCEMODIS` flood granules) + GIBS tiles | none for search/tiles |
 | `app/sources/worldpop.py` | WorldPop 1 km per-country population rasters | none |
 
+## Findings that shaped the design
+
+Discovered by probing the live APIs. Each is enforced in code and pinned by a test, so later phases
+inherit the correction rather than rediscovering it.
+
+**Use the UN-adjusted WorldPop product.** The unconstrained product overstates national totals by an
+amount that varies by country, so it would inflate every affected-population figure:
+
+| country | `wpicuadj1km` (UN-adj) | `wpic1km` (unconstrained) | UN figure |
+|---|---:|---:|---:|
+| Nepal | 29,136,808 | 40,297,824 | ~29.1M |
+| Pakistan | 220,892,352 | 231,216,336 | ~220M |
+| China | 1,439,323,776 | 1,444,326,144 | ~1.41B |
+
+**Population is a sum, not a mean.** Pixels hold counts of people, so averaging understates a flood
+zone by orders of magnitude. Nodata is `-99999.0`, and a naive sum over Nepal's raster gives `-2.8e10`.
+
+**The GDACS event-list bbox is a zero-area centroid**, so `FloodEvent` deliberately exposes no bbox.
+Real extents come from the geometry endpoint's `Poly_Affected` MultiPolygon, with the bbox derived
+from its bounds.
+
+**Select by property, not by position.** The GDACS geometry endpoint returns the centroid and the
+much larger `Poly_Global` alongside `Poly_Affected` in undocumented order. Likewise, CMR-STAC asset
+keys are dynamic production timestamps, so data assets are matched on href extension.
+
+**CMR's NRT archive is short; GIBS is the historical path.** Queries for past events legitimately
+return zero granules — reported as unavailable, never backfilled from a different date. GIBS flood
+tiles cover 2021-01-01 to present with no auth, which is what makes replay demos viable. Its WMTS
+path order is `z/y/x` — row before column.
+
+**Two upstream quirks worked around:** WorldPop's async stats API never completes (status stays
+`"created"`) and leaks PHP warnings into the JSON body, hence local raster math and a lenient JSON
+parser. And `files[0]` in a WorldPop record is not always a raster — Pakistan's lists an
+`ASCII_XYZ.zip`.
+
 ## Setup
 
 ```bash
@@ -51,6 +86,15 @@ annual products). Bypass with `--refresh` or `FLOOD_CACHE_DISABLED=1`.
 ## Tests
 
 ```bash
-uv run pytest           # offline, replays committed fixtures
-uv run pytest -m live   # opt-in, hits the real APIs
+uv run pytest           # 84 offline tests, replays committed fixtures
+uv run pytest -m live   # 9 opt-in tests against the real APIs
 ```
+
+Fixtures are deliberately hostile — hostile feature ordering, a zip before the raster, dynamic asset
+keys — so a regression to a naive implementation cannot pass.
+
+## Next: Phase 2
+
+These functions become MCP tools with no change to their signatures. The `Provenance` records are the
+tool-call receipts the Fact-Check agent checks claims against, and `report_summary()` already emits
+claim → value → source for it.
