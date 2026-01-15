@@ -1,0 +1,32 @@
+{
+  "_fixture_note": "WorldPop Hub records. The 2020 entry lists an ASCII_XYZ zip BEFORE any raster (Pakistan's real 1km entry is zip-only in its first record), so files[0] would hand a zip archive to rasterio. A GeoTIFF exists in a later record for the same year, which is why selection scans all matching records.",
+  "data": [
+    {
+      "id": "1300",
+      "title": "Population 2019",
+      "popyear": "2019",
+      "resolution": "1km",
+      "files": [
+        "https://data.worldpop.org/GIS/Population/Global_2000_2020_1km/2019/PAK/pak_ppp_2019_1km_Aggregated.tif"
+      ]
+    },
+    {
+      "id": "1342",
+      "title": "Population 2020 (ASCII)",
+      "popyear": "2020",
+      "resolution": "1km",
+      "files": [
+        "https://data.worldpop.org/GIS/Population/Global_2000_2020_1km/2020/PAK/pak_ppp_2020_1km_ASCII_XYZ.zip"
+      ]
+    },
+    {
+      "id": "1343",
+      "title": "Population 2020",
+      "popyear": "2020",
+      "resolution": "1km",
+      "files": [
+        "https://data.worldpop.org/GIS/Population/Global_2000_2020_1km/2020/PAK/pak_ppp_2020_1km_Aggregated.tif"
+      ]
+    }
+  ]
+}

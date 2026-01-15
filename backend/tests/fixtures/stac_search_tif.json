@@ -1,0 +1,29 @@
+{
+  "type": "FeatureCollection",
+  "_fixture_note": "Real shape of an MCDWD_L3_F3_NRT_6.1 response. The data asset is keyed '061' and an s3_ mirror is included, which requires AWS credentials rather than an Earthdata login and must be skipped.",
+  "context": { "returned": 1, "limit": 10, "matched": 6 },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "LANCEMODIS:2997393591",
+      "collection": "MCDWD_L3_F3_NRT_6.1",
+      "bbox": [100.0, 30.0, 110.0, 40.0],
+      "properties": {
+        "datetime": "2026-08-13T00:00:00.000Z",
+        "start_datetime": "2026-08-13T00:00:00.000Z",
+        "end_datetime": "2026-08-13T23:59:59.000Z"
+      },
+      "assets": {
+        "s3_061": {
+          "href": "s3://lance-nrt/MCDWD_L3_F3_NRT/2026/225/MCDWD_L3_F3_NRT.A2026225.h28v05.061.tif"
+        },
+        "061": {
+          "href": "https://nrt3.modaps.eosdis.nasa.gov/api/v2/content/archives/allData/61/MCDWD_L3_F3_NRT/2026/225/MCDWD_L3_F3_NRT.A2026225.h28v05.061.tif"
+        },
+        "metadata": {
+          "href": "https://cmr.earthdata.nasa.gov/search/concepts/G4275046552-LANCEMODIS.xml"
+        }
+      }
+    }
+  ]
+}

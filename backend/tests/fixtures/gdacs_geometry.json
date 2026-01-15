@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "_fixture_note": "Feature order is deliberately hostile: the centroid comes first and Poly_Global precedes Poly_Affected. Selecting by list position would pick the wrong geometry, so this fixture fails any positional implementation. Coordinates are simplified; the real response is ~880 KB.",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [103.2791, 35.7003] },
+      "properties": {
+        "eventtype": "FL",
+        "eventid": 1103933,
+        "episodeid": 18,
+        "Class": "Point_Centroid",
+        "polygonlabel": "Centroid"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[90.0, 20.0], [115.0, 20.0], [115.0, 45.0], [90.0, 45.0], [90.0, 20.0]]]
+        ]
+      },
+      "properties": {
+        "eventtype": "FL",
+        "eventid": 1103933,
+        "episodeid": 18,
+        "Class": "Poly_Global",
+        "polygonlabel": "Global area"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[102.5, 34.9], [103.9, 34.9], [103.9, 36.2], [102.5, 36.2], [102.5, 34.9]]]
+        ]
+      },
+      "properties": {
+        "eventtype": "FL",
+        "eventid": 1103933,
+        "episodeid": 18,
+        "Class": "Poly_Affected",
+        "polygonlabel": "Affected area"
+      }
+    }
+  ]
+}

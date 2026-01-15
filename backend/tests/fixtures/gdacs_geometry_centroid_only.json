@@ -1,0 +1,17 @@
+{
+  "type": "FeatureCollection",
+  "_fixture_note": "Some events publish only a centroid. There is no affected area to derive an extent from, so this must raise SourceUnavailable rather than buffering the point into an invented polygon.",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [33.0, 9.0] },
+      "properties": {
+        "eventtype": "FL",
+        "eventid": 1103400,
+        "episodeid": 2,
+        "Class": "Point_Centroid",
+        "polygonlabel": "Centroid"
+      }
+    }
+  ]
+}

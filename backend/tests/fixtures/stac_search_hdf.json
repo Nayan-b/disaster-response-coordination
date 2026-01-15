@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "_fixture_note": "The bare MCDWD_L3_NRT_6.1 collection. Its data asset is keyed by a DYNAMIC production timestamp ('2026220030232'), so no stable key lookup is possible — selection must go by href extension. The payload is HDF, not GeoTIFF.",
+  "context": { "returned": 1, "limit": 10, "matched": 4 },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "LANCEMODIS:2990269342",
+      "collection": "MCDWD_L3_NRT_6.1",
+      "bbox": [100.0, 30.0, 110.0, 40.0],
+      "properties": { "datetime": "2026-08-07T00:00:00.000Z" },
+      "assets": {
+        "2026220030232": {
+          "href": "https://nrt3.modaps.eosdis.nasa.gov/api/v2/content/archives/allData/61/MCDWD_L3_NRT/2026/219/MCDWD_L3_NRT.A2026219.h28v05.061.2026220030232.hdf"
+        },
+        "browse": {
+          "href": "https://nrt3.modaps.eosdis.nasa.gov/browse/MCDWD_L3_NRT.A2026219.h28v05.jpg"
+        },
+        "metadata": {
+          "href": "https://cmr.earthdata.nasa.gov/search/concepts/G4273830419-LANCEMODIS.xml"
+        }
+      }
+    }
+  ]
+}

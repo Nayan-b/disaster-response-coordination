@@ -1,0 +1,7 @@
+{
+  "type": "FeatureCollection",
+  "_fixture_note": "What a historical query returns: LANCE keeps only a short rolling NRT archive. A legitimate empty result, which must surface as unavailable rather than being backfilled with a granule from another date.",
+  "context": { "returned": 0, "limit": 10, "matched": 0 },
+  "features": [],
+  "links": []
+}

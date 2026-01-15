@@ -1,0 +1,89 @@
+{
+  "type": "FeatureCollection",
+  "_fixture_note": "Trimmed from a real GDACS response. Preserves the traps: a zero-area centroid bbox, an overall alert level that disagrees with the episode level, severity 0.0 with 'Magnitude 0' text, naive timestamps with no timezone, and iscurrent/istemporary as the STRINGS 'true'/'false'.",
+  "features": [
+    {
+      "type": "Feature",
+      "bbox": [-117.0244, 34.8986, -117.0244, 34.8986],
+      "geometry": { "type": "Point", "coordinates": [-117.0244, 34.8986] },
+      "properties": {
+        "eventtype": "FL",
+        "eventid": 1103339,
+        "episodeid": 33,
+        "eventname": "",
+        "glide": "FL-2025-000106-USA",
+        "name": "Flood in United States",
+        "description": "Flood in United States",
+        "alertlevel": "Orange",
+        "alertscore": 2,
+        "episodealertlevel": "Green",
+        "episodealertscore": 0.5,
+        "istemporary": "false",
+        "iscurrent": "false",
+        "country": "United States",
+        "fromdate": "2025-06-15T01:00:00",
+        "todate": "2025-09-21T01:00:00",
+        "datemodified": "2025-10-08T14:23:01",
+        "iso3": "USA",
+        "source": "GLOFAS",
+        "affectedcountries": [
+          { "iso2": "US", "iso3": "USA", "countryname": "United States" }
+        ],
+        "severitydata": {
+          "severity": 0.0,
+          "severitytext": "Magnitude 0 ",
+          "severityunit": ""
+        },
+        "url": {
+          "geometry": "https://www.gdacs.org/gdacsapi/api/polygons/getgeometry?eventtype=FL&eventid=1103339&episodeid=33",
+          "report": "https://www.gdacs.org/report.aspx?eventid=1103339&episodeid=33&eventtype=FL",
+          "details": "https://www.gdacs.org/gdacsapi/api/events/geteventdata?eventtype=FL&eventid=1103339"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "bbox": [33.0, 9.0, 33.0, 9.0],
+      "geometry": { "type": "Point", "coordinates": [33.0, 9.0] },
+      "properties": {
+        "eventtype": "FL",
+        "eventid": 1103400,
+        "episodeid": 2,
+        "name": "Flood in South Sudan",
+        "alertlevel": "Red",
+        "alertscore": 3,
+        "episodealertlevel": "Red",
+        "episodealertscore": 3,
+        "istemporary": "true",
+        "iscurrent": "true",
+        "country": "South Sudan, Ethiopia",
+        "fromdate": "2025-07-01T00:00:00",
+        "todate": "2025-08-01T00:00:00",
+        "datemodified": "2025-08-02T06:00:00",
+        "iso3": "SSD",
+        "source": "GLOFAS",
+        "affectedcountries": [
+          { "iso2": "SS", "iso3": "SSD", "countryname": "South Sudan" },
+          { "iso2": "ET", "iso3": "ETH", "countryname": "Ethiopia" }
+        ],
+        "severitydata": {
+          "severity": 1.5,
+          "severitytext": "Magnitude 1.5",
+          "severityunit": "m"
+        },
+        "url": {
+          "report": "https://www.gdacs.org/report.aspx?eventid=1103400"
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "_fixture_note": "No eventid — must be skipped, not crash the parse.",
+        "eventtype": "FL",
+        "name": "Malformed entry"
+      }
+    }
+  ]
+}
