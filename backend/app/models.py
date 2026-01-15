@@ -223,6 +223,76 @@ class ToolCall(BaseModel):
         return f"{self.call_id} {self.tool}({args}) → {status} @ {self.called_at:%Y-%m-%d %H:%M:%SZ}"
 
 
+class Claim(BaseModel):
+    """One assertion the Allocation agent wants to make, with the tool call it came from.
+
+    `source_call_id` is mandatory for any claim carrying a `value`. The Fact-Check agent resolves it
+    against the session's `ToolCall` log and rejects the claim if the number is not actually there —
+    which is how "every number must be traceable to a tool call and timestamp" becomes enforceable
+    instead of merely requested.
+    """
+
+    claim_id: str
+    text: str
+    value: float | None = None
+    unit: str | None = None
+    source_call_id: str | None = None
+    # Set by the Fact-Check agent, never by the drafting agent.
+    verified: bool = False
+    rejection_reason: str | None = None
+
+
+class AllocationAction(BaseModel):
+    """A single proposed action inside a recommendation. Never executed by this system."""
+
+    priority: int
+    action: str
+    rationale: str
+    supporting_claim_ids: list[str] = Field(default_factory=list)
+
+
+class Recommendation(BaseModel):
+    """A draft resource-allocation recommendation, pending human review.
+
+    Framed as a recommendation everywhere — in the field names, the UI copy, and the system prompt.
+    Nothing in this system executes an action; approval only records a human's decision.
+    """
+
+    headline: str
+    situation: str
+    actions: list[AllocationAction] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+    # "claude-opus-5" or "rule-based" — a responder should know what drafted this.
+    drafted_by: str
+    drafted_at: datetime
+    requires_human_approval: bool = True
+
+
+class FactCheckResult(BaseModel):
+    """Outcome of verifying a draft's claims against the tool-call log."""
+
+    verified_claims: list[Claim] = Field(default_factory=list)
+    rejected_claims: list[Claim] = Field(default_factory=list)
+    # True when nothing unverifiable survived, so the draft may go to a human.
+    passed: bool = True
+    blocking_reason: str | None = None
+
+    @property
+    def rejected_count(self) -> int:
+        return len(self.rejected_claims)
+
+
+class ApprovalDecision(BaseModel):
+    """A human responder's decision on a recommendation."""
+
+    decision: Literal["approved", "edited", "rejected"]
+    reviewer: str
+    decided_at: datetime
+    notes: str | None = None
+    # Present when decision == "edited": the responder's replacement text.
+    edited_actions: list[AllocationAction] | None = None
+
+
 class EventReport(BaseModel):
     """All three sources for one event, assembled for human review.
 
