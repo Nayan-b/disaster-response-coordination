@@ -139,6 +139,16 @@ def _sse(event: str, data: Any) -> dict[str, str]:
     return {"event": event, "data": json.dumps(_jsonable(data))}
 
 
+# Chrome withholds the start of a streamed response from `fetch` until its MIME-sniffing buffer
+# fills (~1 KB). The early trace events are far smaller than that, so without padding the UI shows
+# nothing for the first several seconds of a run — the stream is open and healthy, just invisible.
+# An SSE comment is ignored by every client and flushes that buffer immediately.
+_SNIFF_PADDING = {"comment": "padding " + "-" * 2048}
+
+# Tell reverse proxies not to buffer the stream either (nginx and friends honor these).
+SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
+
+
 # ---------------------------------------------------------------------------
 # Streaming
 # ---------------------------------------------------------------------------
@@ -183,6 +193,7 @@ async def _stream_graph(thread_id: str, graph_input: Any) -> AsyncIterator[dict[
 
     threading.Thread(target=worker, name=f"flood-run-{thread_id}", daemon=True).start()
 
+    yield _SNIFF_PADDING
     yield _sse("run_started", {"thread_id": thread_id, "engine": llm.active_engine()})
 
     while True:
@@ -276,13 +287,14 @@ async def stream_run(thread_id: str) -> EventSourceResponse:
         if not snapshot.values:
             raise HTTPException(404, f"unknown run {thread_id!r}")
         # Nothing left to advance — replay current state rather than re-running the graph.
-        return EventSourceResponse(_replay(thread_id, snapshot))
+        return EventSourceResponse(_replay(thread_id, snapshot), headers=SSE_HEADERS)
 
-    return EventSourceResponse(_stream_graph(thread_id, graph_input))
+    return EventSourceResponse(_stream_graph(thread_id, graph_input), headers=SSE_HEADERS)
 
 
 async def _replay(thread_id: str, snapshot: Any) -> AsyncIterator[dict[str, str]]:
     values = snapshot.values or {}
+    yield _SNIFF_PADDING
     yield _sse("run_started", {"thread_id": thread_id, "replay": True})
     for entry in values.get("trace") or []:
         yield _sse("trace", entry)
