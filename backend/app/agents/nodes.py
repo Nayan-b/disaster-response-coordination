@@ -353,8 +353,14 @@ def allocation_draft(state: FloodState) -> dict[str, Any]:
     if llm.llm_available():
         try:
             draft = _llm_draft(state, claims, unavailable)  # type: ignore[assignment]
+            # Prefer the model that actually served the request: an OpenRouter request may be
+            # routed to a different upstream than the one named, and `drafted_by` should say who
+            # really wrote this rather than who was asked.
+            engine = llm.engine_label_for(draft)
         except llm.LLMUnavailable as exc:
             engine = llm.ENGINE_RULE_BASED
+            # Recorded as a caveat so a responder sees the LLM was attempted and why it fell back,
+            # rather than silently receiving a rule-based draft.
             unavailable["allocation_llm"] = str(exc)
 
     if draft is None:

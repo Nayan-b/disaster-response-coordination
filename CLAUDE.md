@@ -96,15 +96,37 @@ coordinates. This keeps the polygon out of the LLM context, the checkpoint, and 
   (2021→present, no auth) are the historical path.
 - WorldPop's async stats API never completes; `files[0]` is not always a raster.
 
-## Claude API usage
+## LLM providers (`app/agents/llm.py`)
 
-Model is `claude-opus-5` (`app/agents/llm.py`).
+Three engines behind one interface: Anthropic direct, OpenRouter, and the rule-based fallback.
+`active_provider()` resolves which — `FLOOD_LLM_PROVIDER` wins, else `ANTHROPIC_API_KEY` beats
+`OPENROUTER_API_KEY`, else rule-based.
+
+**Anthropic (`claude-opus-5`):**
 
 - **Never send `temperature`, `top_p`, or `top_k`** — Opus 5 returns a 400.
 - Thinking is on by default and shares the `max_tokens` budget, so keep it generous.
 - Structured output uses Anthropic's native `output_config.format`, **not** LangChain's
   `with_structured_output()` (which forces `tool_choice`, whose interaction with thinking is not
   worth gambling on).
+
+**OpenRouter** (OpenAI-compatible gateway, model ids vendor-namespaced):
+
+- **`use_responses_api=False` is required.** langchain-openai 1.x targets OpenAI's Responses API by
+  default; OpenRouter serves `/chat/completions` only, and the mismatch fails while *parsing a valid
+  reply* (`'NoneType' object is not iterable`), which reads like a server fault.
+- **`reasoning` must go in `extra_body`, not the `reasoning=` field.** As a named kwarg the
+  structured-output `.parse()` path rejects it outright.
+- Structured output is `response_format: {type: "json_schema", strict: true}` — the OpenAI dialect.
+  `_schema_for()` emits a schema valid for both providers.
+- The token budget goes out as `max_completion_tokens` (langchain-openai aliases it); OpenRouter
+  accepts it.
+- Don't send `temperature` here either, even though OpenRouter advertises it for Opus 5 — keeping
+  both paths prompt-steered means switching providers doesn't change behavior.
+
+**Provenance:** OpenRouter can route to a different upstream than requested, so `drafted_by` comes
+from the response's model field (`engine_label_for()`), not the requested id. Don't "simplify" that
+back to the configured model.
 
 **The rule-based fallback is load-bearing.** With no Anthropic credentials the graph produces the
 same structured objects from the same evidence, so the full pipeline including the approval gate

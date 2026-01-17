@@ -146,29 +146,48 @@ uv run python -m app.mcp_server --http # streamable HTTP
 
 ---
 
-## Running with Claude
+## LLM providers
 
-The system runs **with or without** Anthropic credentials:
+Three engines, one interface. The system runs on any of them:
 
-| | Engine | What differs |
+| Provider | Configure with | `drafted_by` shows |
 |---|---|---|
-| No credentials | `rule-based` | Deterministic drafting from the same evidence |
-| `ANTHROPIC_API_KEY` set | `claude-opus-5` | Claude handles event triage and drafts the recommendation |
+| **Anthropic** (direct) | `ANTHROPIC_API_KEY` | `claude-opus-5` |
+| **OpenRouter** (400+ models) | `OPENROUTER_API_KEY` | `openrouter:anthropic/claude-opus-5` |
+| **None** — deterministic | *(nothing)* | `rule-based` |
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # optional
+export ANTHROPIC_API_KEY=sk-ant-...           # Anthropic direct
+export OPENROUTER_API_KEY=sk-or-...           # or via OpenRouter
+export FLOOD_OPENROUTER_MODEL=openai/gpt-5.2  # any OpenRouter model id
 ```
 
-The rule-based path is a real fallback, not a stub: it produces the same structured objects from the
-same tool results, so the entire pipeline — fact-check and approval gate included — is runnable and
-testable without a key. Every recommendation records which engine drafted it (`drafted_by`), and the
-UI displays it, so a responder is never misled about provenance.
+With both keys set, the direct Anthropic path wins — fewer hops. Force the gateway with
+`FLOOD_LLM_PROVIDER=openrouter`, or pin the deterministic engine with `FLOOD_LLM_PROVIDER=none`
+even when keys are present.
 
-Note the API constraints baked into `app/agents/llm.py`: Claude Opus 5 rejects `temperature` /
-`top_p` / `top_k` with a 400, thinking is on by default and shares the `max_tokens` budget, and
-structured output uses Anthropic's native `output_config.format`.
+OpenRouter model ids are vendor-namespaced (`anthropic/claude-opus-5`, `openai/gpt-5.2`,
+`google/gemini-2.5-pro`). **Pick one that supports structured outputs** — drafting needs
+schema-constrained JSON, and roughly 335 of OpenRouter's ~413 models qualify.
 
----
+The rule-based path is a real fallback, not a stub: it produces the same structured objects from
+the same tool results, so the entire pipeline — fact-check and approval gate included — is runnable
+and testable with no key at all. It is also what the system falls back to if a configured provider
+errors mid-run, with the reason recorded as a caveat rather than silently swallowed.
+
+**Provenance survives the gateway.** OpenRouter may route a request to a different upstream than the
+one requested — that is the point of it — so `drafted_by` reports the model that *actually answered*,
+read from the response, not the one that was asked for. In a system where every number is traceable,
+"which model wrote this" shouldn't be a guess.
+
+Two provider-specific details worth knowing, both in `app/agents/llm.py`:
+
+- **Structured output differs by dialect.** Anthropic uses its native `output_config.format`;
+  OpenRouter speaks the OpenAI-compatible `response_format: {type: "json_schema", strict: true}`.
+  One pydantic schema feeds both.
+- **Neither path sends `temperature`.** Claude Opus 5 rejects it with a 400. OpenRouter advertises
+  it for the same model because it normalizes across vendors — but keeping both prompt-steered means
+  switching providers doesn't quietly change behavior.
 
 ## The guardrail
 
