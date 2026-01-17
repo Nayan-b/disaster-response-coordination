@@ -152,5 +152,9 @@ requires `autocommit=True` and `dict_row`.
 
 Phases 1–6 are built and verified against live APIs. Remaining: the historical replay mode.
 
-Known issue under investigation: the browser SSE stream returns 503 while the same endpoint streams
-correctly to `curl` — run state still advances and is recoverable via `GET /api/runs/{id}`.
+The browser SSE issue is resolved: sse-starlette separates frames with CRLFCRLF and the client split
+on `"\n\n"`, so no event ever dispatched; Chrome also withheld the first ~1 KB of the stream for MIME
+sniffing. Both are fixed (`/\r?\n\r?\n/` split, plus a padding comment) — don't reintroduce either.
+
+Not yet verified: the approval card's click-through in a browser. The SSE transport and the approval
+endpoint are each verified independently.
