@@ -62,7 +62,45 @@ All live, all free, no keys required for what this app does.
 
 ---
 
-## Quick start
+## Quick start (Docker)
+
+The whole stack — Postgres, backend, dashboard — in one command:
+
+```bash
+docker compose up --build     # → http://localhost:3000
+```
+
+Compose starts Postgres first and waits for it to be genuinely ready, brings up the backend, waits
+for its health check, then starts the dashboard. No key is required; without one the stack runs on
+the rule-based engine. To use Claude, `cp .env.example .env` and set `ANTHROPIC_API_KEY`.
+
+| Service | Port | Notes |
+|---|---|---|
+| `frontend` | 3000 | Next.js dashboard |
+| `backend` | 8088 | FastAPI + SSE |
+| `postgres` | 55432 | Checkpoint store, exposed for `psql` |
+
+Two named volumes persist across restarts: `postgres-data` (paused runs) and `flood-cache`
+(downloaded rasters — worth keeping, since WorldPop rasters run ~100 MB per country).
+
+```bash
+docker compose logs -f backend      # follow the backend
+docker compose down                 # stop, keep data
+docker compose down -v              # stop and wipe volumes
+```
+
+> **If you change `BACKEND_PORT`, rebuild the frontend** (`docker compose up --build`).
+> `NEXT_PUBLIC_API_BASE` is inlined into the browser bundle at build time, not read at runtime.
+
+To seed the container's cache from a local one (handy for offline demos, or when an upstream host
+is down):
+
+```bash
+docker compose cp data/cache/worldpop/. backend:/data/cache/worldpop/
+docker compose exec -u root backend chown -R flood:flood /data/cache
+```
+
+## Running locally without Docker
 
 Requires Python 3.12+ with [uv](https://docs.astral.sh/uv/), and Node 20+.
 
@@ -200,8 +238,9 @@ what was unavailable and why.
 → imagery is a fixed correct sequence, so handing it to a model would add latency, cost, and a
 fabrication surface for no benefit.
 
-**Runs live in a checkpoint, not in a process.** SQLite locally, Postgres in production. A paused run
-survives a server restart, which is what makes "close the tab and come back" true rather than
+**Runs live in a checkpoint, not in a process.** SQLite locally, Postgres under compose. A paused run
+survives a server restart — verified by restarting the backend container mid-approval and then
+approving the recovered run — which is what makes "close the tab and come back" true rather than
 aspirational.
 
 ---
@@ -239,11 +278,13 @@ Each was found by probing the live APIs, is handled in code, and is pinned by a 
 
 ## Status
 
-Phases 1–5 complete and verified against live APIs: data layer, MCP tools, agent graph, human-in-the-
-loop with checkpointing, and the streaming map UI.
+Phases 1–6 complete and verified against live APIs: data layer, MCP tools, agent graph,
+human-in-the-loop with checkpointing, the streaming map UI, and Docker Compose orchestration with
+Postgres.
 
-Not yet built: docker-compose with Postgres, and historical replay mode for demos.
+Not yet built: historical replay mode for demos.
 
 One caveat on verification: the approval card's click-through in the browser hasn't been exercised
 end to end. The SSE transport and the approval endpoint are both verified independently (via a Node
-client against the live stream, and direct API calls), but the final UI click path is unconfirmed.
+client against the live stream, and direct API calls against the containerized stack), but the final
+UI click path is unconfirmed.

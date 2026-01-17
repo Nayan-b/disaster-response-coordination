@@ -31,6 +31,12 @@ npx tsc --noEmit   # typecheck
 npm run build
 ```
 
+```bash
+docker compose up --build      # whole stack: postgres + backend + frontend
+docker compose logs -f backend
+docker compose down -v         # stop and wipe volumes
+```
+
 **Port 8088, not 8000.** Port 8000 is occupied by an unrelated Django project on this machine. The
 frontend reads `NEXT_PUBLIC_API_BASE` from `frontend/.env.local`.
 
@@ -124,10 +130,27 @@ allowlist in `app/agents/graph.py` (`CHECKPOINTED_TYPES`) must list every pydant
 graph state — LangGraph warns now and will block unregistered types later, and a permissive
 deserializer on a checkpoint DB is a code-execution path. Add new state models there.
 
+`postgres_checkpointer()` builds a `PostgresSaver` from an explicit `ConnectionPool` rather than
+`PostgresSaver.from_conn_string()`, because that helper takes no `serde` argument (so the allowlist
+could not be applied) and yields a context manager, which doesn't suit a long-lived server. The pool
+requires `autocommit=True` and `dict_row`.
+
+## Docker
+
+- **`libexpat1` is required in the backend image.** rasterio's wheel bundles GDAL but not expat, so
+  `import rasterio` fails on `python:*-slim` without it. Confirmed by `ldd` as the only missing
+  library — don't apt-install a system GDAL, which would risk two GDAL builds disagreeing.
+- **`NEXT_PUBLIC_API_BASE` is a frontend *build* arg, not a runtime env var.** It is inlined into the
+  browser bundle, so it must be the host-reachable URL (`http://localhost:8088`), never the
+  compose-internal `backend:8088`. Changing the backend port means rebuilding the frontend image.
+- The Postgres healthcheck passes `-d $POSTGRES_DB`; without it `pg_isready` probes a database named
+  after the user and reports ready before ours exists.
+- One uvicorn worker by design — the per-run lock preventing two clients advancing the same run is
+  process-local. Scaling out means moving that lock into Postgres first.
+
 ## Status
 
-Phases 1–5 are built and verified against live APIs. Remaining: docker-compose with Postgres
-(Phase 6), and the historical replay mode.
+Phases 1–6 are built and verified against live APIs. Remaining: the historical replay mode.
 
 Known issue under investigation: the browser SSE stream returns 503 while the same endpoint streams
 correctly to `curl` — run state still advances and is recoverable via `GET /api/runs/{id}`.

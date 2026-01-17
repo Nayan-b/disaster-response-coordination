@@ -1,0 +1,77 @@
+# Flood Response Coordinator — full stack.
+#
+#   docker compose up --build       → dashboard on http://localhost:3000
+#
+# Three services: Postgres (checkpoint store), the FastAPI backend, and the Next.js dashboard.
+# Copy .env.example to .env to set an Anthropic key; without one the stack still runs end to end
+# on the rule-based engine.
+
+name: flood-response
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flood}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flood}
+      POSTGRES_DB: ${POSTGRES_DB:-flood}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Exposed for psql/inspection. Drop this line if you don't need host access.
+      - "${POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      # -d matters: without it pg_isready checks a database named after the user, which reports
+      # ready before our actual database exists, and the backend then races the first connection.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flood} -d ${POSTGRES_DB:-flood}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      FLOOD_POSTGRES_DSN: postgresql://${POSTGRES_USER:-flood}:${POSTGRES_PASSWORD:-flood}@postgres:5432/${POSTGRES_DB:-flood}
+      FLOOD_CACHE_DIR: /data/cache
+      # Optional — absent means the graph drafts with the deterministic rule-based engine.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FLOOD_CLAUDE_MODEL: ${FLOOD_CLAUDE_MODEL:-claude-opus-5}
+      # Origins allowed to call the API from a browser.
+      FLOOD_CORS_ORIGINS: ${FLOOD_CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      # WorldPop rasters are ~100 MB per country and static once fetched. Persisting the cache
+      # keeps container restarts from re-downloading them.
+      - flood-cache:/data
+    ports:
+      - "${BACKEND_PORT:-8088}:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8088/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the client bundle at build time, so it must be reachable from the browser —
+        # the host-published port, never the compose-internal `backend` hostname.
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8088}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  flood-cache:

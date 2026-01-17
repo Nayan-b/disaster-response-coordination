@@ -1,0 +1,18 @@
+# Keep the build context small and free of local state.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local caches and checkpoints — the container gets its own volumes.
+../data/
+data/
+
+# Tests aren't needed in the runtime image.
+tests/
+
+.env
+.env.local
+.DS_Store

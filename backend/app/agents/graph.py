@@ -221,24 +221,41 @@ def sqlite_checkpointer(path: Path | str = CHECKPOINT_PATH):
     return SqliteSaver(connection, serde=make_serializer())
 
 
-def postgres_checkpointer(dsn: str | None = None):
-    """A PostgresSaver for production (used by docker-compose).
+def postgres_checkpointer(dsn: str | None = None, *, setup: bool = True):
+    """A PostgresSaver backed by a connection pool — the production path (docker-compose).
 
-    Returns a context manager — `PostgresSaver.from_conn_string()` owns the connection pool, and
-    `.setup()` must run once to create the checkpoint tables.
+    Built from an explicit pool rather than `PostgresSaver.from_conn_string()`, for two reasons:
+    that helper takes no `serde` argument (so the msgpack allowlist above could not be applied),
+    and it yields a context manager, which doesn't fit a server that holds the saver for its whole
+    lifetime.
+
+    `autocommit=True` and `dict_row` are both required by PostgresSaver. `.setup()` creates the
+    checkpoint tables and is idempotent, so it is safe on every boot — including when several
+    replicas start at once.
     """
     dsn = dsn or os.environ.get("FLOOD_POSTGRES_DSN")
     if not dsn:
         raise RuntimeError("set FLOOD_POSTGRES_DSN to use the Postgres checkpointer")
-    from langgraph.checkpoint.postgres import PostgresSaver
 
-    return PostgresSaver.from_conn_string(dsn, serde=make_serializer())
+    from langgraph.checkpoint.postgres import PostgresSaver
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    pool = ConnectionPool(
+        conninfo=dsn,
+        min_size=1,
+        max_size=int(os.environ.get("FLOOD_POSTGRES_POOL_MAX", "10")),
+        kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": 0},
+        open=True,
+    )
+    saver = PostgresSaver(pool, serde=make_serializer())
+    if setup:
+        saver.setup()
+    return saver
 
 
 def default_checkpointer():
     """Postgres when a DSN is configured, else local SQLite."""
     if os.environ.get("FLOOD_POSTGRES_DSN"):
-        saver = postgres_checkpointer().__enter__()
-        saver.setup()
-        return saver
+        return postgres_checkpointer()
     return sqlite_checkpointer()

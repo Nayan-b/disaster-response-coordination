@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -58,10 +59,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Defaults cover the Next.js dev server; override with FLOOD_CORS_ORIGINS (comma-separated) when
+# the dashboard is served from somewhere else. Deliberately not "*" — the approval endpoint mutates
+# run state, so the allowed origins should be named.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "FLOOD_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    # Next.js dev server. Tighten to the deployed origin in production.
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
