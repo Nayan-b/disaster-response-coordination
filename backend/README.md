@@ -1,10 +1,12 @@
-# Flood Response Coordinator — Backend (Phase 1: data layer)
+# Backend — the data layer
 
-Plain Python functions against real disaster-data APIs. No LLM, no agents, no web server yet.
+Plain Python functions against real disaster-data APIs, with no LLM involved. This is the foundation
+everything else sits on; for the agent graph, the API service, and how to run the whole stack, see
+the [root README](../README.md).
 
-Phase 1 exists to de-risk everything downstream: API quirks (wrong bbox math, misread severity
-levels) are far cheaper to debug without an LLM in the loop, and every agent built later inherits
-whatever the data layer gets wrong.
+It was built first, deliberately: API quirks (wrong bbox math, misread severity levels) are far
+cheaper to debug without an LLM in the loop, and every agent above it inherits whatever the data
+layer gets wrong. The findings below are the reason that ordering paid off.
 
 ## Sources
 
@@ -16,8 +18,8 @@ whatever the data layer gets wrong.
 
 ## Findings that shaped the design
 
-Discovered by probing the live APIs. Each is enforced in code and pinned by a test, so later phases
-inherit the correction rather than rediscovering it.
+Discovered by probing the live APIs. Each is enforced in code and pinned by a test, so everything
+built on top inherits the correction rather than rediscovering it.
 
 **Use the UN-adjusted WorldPop product.** The unconstrained product overstates national totals by an
 amount that varies by country, so it would inflate every affected-population figure:
@@ -71,8 +73,8 @@ uv run python -m app.cli report     --event-id 1103339 --episode-id 33
 
 Every value returned by this layer carries a `Provenance` record (source, exact request URL, UTC
 fetch timestamp, cache age). The project requires that every number reaching a human responder be
-traceable to a specific tool call and timestamp — the Fact-Check agent added in Phase 3 can only
-enforce that if the data layer emits it, so it is built in from the start rather than retrofitted.
+traceable to a specific tool call and timestamp — the Fact-Check agent can only enforce that if the
+data layer emits it, so it was built in from the start rather than retrofitted.
 
 Corollary: **no function in this layer returns an estimated, interpolated, or fallback number.** If a
 source fails, is empty, or returns something unparseable, it raises `SourceUnavailable`.
@@ -86,15 +88,16 @@ annual products). Bypass with `--refresh` or `FLOOD_CACHE_DISABLED=1`.
 ## Tests
 
 ```bash
-uv run pytest           # 84 offline tests, replays committed fixtures
+uv run pytest           # 108 offline tests, replays committed fixtures
 uv run pytest -m live   # 9 opt-in tests against the real APIs
 ```
 
 Fixtures are deliberately hostile — hostile feature ordering, a zip before the raster, dynamic asset
 keys — so a regression to a naive implementation cannot pass.
 
-## Next: Phase 2
+## What sits on top
 
-These functions become MCP tools with no change to their signatures. The `Provenance` records are the
-tool-call receipts the Fact-Check agent checks claims against, and `report_summary()` already emits
-claim → value → source for it.
+These functions are exposed as MCP tools with no change to their signatures (`app/tools.py`,
+`app/mcp_server.py`), and the LangGraph agents call the same registry. The `Provenance` records here
+are the tool-call receipts the Fact-Check agent verifies claims against — which is why this layer
+records where every value came from rather than just returning the value.

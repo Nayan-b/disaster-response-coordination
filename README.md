@@ -228,16 +228,19 @@ recommendation with a hole in it is worse than no recommendation.
 backend/
   app/
     sources/       GDACS, CMR-STAC/GIBS, WorldPop clients (no LLM)
-    agents/        LangGraph nodes, deterministic fact-check, Claude access
+    agents/        LangGraph nodes, deterministic fact-check, LLM providers
     tools.py       one registry of capabilities, shared by MCP and the agents
     mcp_server.py  MCP adapter over that registry
     api.py         FastAPI + SSE streaming + approval endpoint
     cli.py         inspect any source from the terminal
-  tests/           84 offline (committed fixtures) + 9 live
+  tests/           108 offline (committed fixtures) + 9 live
+  Dockerfile
 frontend/
   app/page.tsx     map-first dashboard
   components/      Leaflet map, trace panel, approval card
   lib/api.ts       SSE client
+  Dockerfile
+docker-compose.yml postgres + backend + frontend
 ```
 
 ---
@@ -268,7 +271,7 @@ aspirational.
 
 ```bash
 cd backend
-uv run pytest           # 84 offline tests, no network
+uv run pytest           # 108 offline tests, no network
 uv run pytest -m live   # 9 tests against the real APIs
 ```
 

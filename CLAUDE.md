@@ -17,7 +17,7 @@ uv run python -m app.cli events --days 45          # live GDACS flood events
 uv run python -m app.cli report --event-id <id>    # all three sources + provenance
 uv run python -m app.cli cache                     # cache size by source
 
-uv run pytest                                      # 84 offline tests (committed fixtures)
+uv run pytest                                      # 108 offline tests (committed fixtures)
 uv run pytest -m live                              # 9 tests against the real APIs
 
 uv run uvicorn app.api:app --port 8088 --reload    # API (see port note below)
