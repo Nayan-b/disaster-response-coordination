@@ -6,10 +6,18 @@
  * all of which matter for surfacing a failed run instead of retrying it silently forever.
  */
 
-import type { ApprovalRequest, FloodEvent, RunState, TraceEvent } from "./types";
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  FloodEvent,
+  Recommendation,
+  RunState,
+  TraceEvent,
+} from "./types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+// 8088, not 8000 — see the port note in CLAUDE.md. `frontend/.env.local` normally supplies this;
+// the fallback exists so a missing env file degrades to the right port rather than a stale one.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8088";
 
 export interface Health {
   ok: boolean;
@@ -175,9 +183,17 @@ export async function submitDecision(
       (payload as { detail?: string }).detail ?? `decision → HTTP ${response.status}`,
     );
   }
-  return payload as {
-    status: string;
-    approval: { decision: string; reviewer: string; notes: string | null };
-    notice: string;
-  };
+  return payload as DecisionResponse;
+}
+
+export interface DecisionResponse {
+  thread_id: string;
+  /** "logged_approved" | "logged_edited" | "logged_rejected". */
+  status: string;
+  approval: ApprovalDecision;
+  /** Carries the reviewer's edits, so an edited brief renders from the server's copy. */
+  recommendation: Recommendation | null;
+  /** The last few trace lines the resume produced — appended to the live trace. */
+  trace: TraceEvent[];
+  notice: string;
 }

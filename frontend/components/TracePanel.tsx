@@ -1,115 +1,145 @@
 "use client";
 
-/** Live agent reasoning trace, plus the tool-call log that backs every figure. */
+/**
+ * The live reasoning trace.
+ *
+ * Grouped by stage rather than shown as one flat river of text: a run emits a dozen-plus lines and
+ * "which agent said this" is the first thing a reader needs. Warnings and errors can be isolated,
+ * because on a run that went sideways those are the only lines that matter.
+ *
+ * Auto-scroll follows the tail only while the reader is already at the bottom — yanking the view
+ * back down while someone is reading an earlier line is worse than not following at all.
+ */
 
-import { useEffect, useRef } from "react";
+import { AlertTriangle, ListFilter, Radio, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ToolCallSummary, TraceEvent } from "@/lib/types";
+import { EmptyState } from "@/components/ui/data-display";
+import { formatClock, humanize } from "@/lib/format";
+import type { TraceEvent } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { STAGES } from "@/lib/workflow";
 
-const NODE_LABELS: Record<string, string> = {
-  alert_monitor: "Alert Monitor",
-  imagery_retrieval: "Imagery Retrieval",
-  population_overlay: "Population Overlay",
-  allocation_draft: "Allocation Draft",
-  fact_check: "Fact-Check",
-  human_gate: "Human Gate",
-  action_log: "Action Log",
-};
+const STAGE_LABEL = new Map(STAGES.map((stage) => [stage.id, stage.label]));
 
-const LEVEL_STYLES: Record<string, string> = {
-  info: "text-foreground",
-  warning: "text-amber-600 dark:text-amber-400",
-  error: "text-red-600 dark:text-red-400",
+const LEVEL_STYLE: Record<string, string> = {
+  info: "text-foreground/85",
+  warning: "text-amber-700 dark:text-amber-300",
+  error: "text-red-700 dark:text-red-300",
 };
 
 export function TracePanel({
   trace,
-  toolCalls,
   running,
 }: {
   trace: TraceEvent[];
-  toolCalls: ToolCallSummary[];
   running: boolean;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const [onlyIssues, setOnlyIssues] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pinnedToBottom = useRef(true);
+
+  const issues = trace.filter((entry) => entry.level !== "info").length;
+  const visible = onlyIssues ? trace.filter((entry) => entry.level !== "info") : trace;
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [trace.length]);
+    const node = scrollRef.current;
+    if (!node || !pinnedToBottom.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [visible.length]);
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-sm font-semibold">Agent trace</h2>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-2 border-b px-4 py-2">
+        <span className="text-xs font-semibold">Reasoning trace</span>
         {running ? (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-            running
+          <span className="flex items-center gap-1.5 text-[11px] text-sky-600 dark:text-sky-400">
+            <Radio className="size-3 animate-pulse" />
+            live
           </span>
         ) : (
-          <span className="text-xs text-muted-foreground">{trace.length} steps</span>
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            {trace.length} line{trace.length === 1 ? "" : "s"}
+          </span>
         )}
+        {issues > 0 ? (
+          <button
+            type="button"
+            onClick={() => setOnlyIssues((prev) => !prev)}
+            aria-pressed={onlyIssues}
+            className={cn(
+              "ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+              onlyIssues
+                ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            <ListFilter className="size-3" />
+            {issues} issue{issues === 1 ? "" : "s"}
+          </button>
+        ) : null}
       </div>
 
-      <ScrollArea className="flex-1 border-y">
-        <ol className="divide-y">
-          {trace.length === 0 ? (
-            <li className="px-4 py-6 text-xs text-muted-foreground">
-              No activity yet. Start a run to watch the agents work.
-            </li>
-          ) : (
-            trace.map((entry, index) => (
-              <li key={`${entry.at}-${index}`} className="px-4 py-2.5">
-                <div className="flex items-baseline gap-2">
-                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {NODE_LABELS[entry.node] ?? entry.node}
-                  </span>
-                  <time className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                    {new Date(entry.at).toLocaleTimeString()}
-                  </time>
-                </div>
-                <p className={`mt-0.5 text-xs leading-relaxed ${LEVEL_STYLES[entry.level] ?? ""}`}>
-                  {entry.level === "warning" ? "⚠ " : entry.level === "error" ? "✕ " : ""}
-                  {entry.message}
-                </p>
-              </li>
-            ))
-          )}
-          <div ref={endRef} />
-        </ol>
-      </ScrollArea>
-
-      <div className="px-4 py-3">
-        <h3 className="text-xs font-semibold">
-          Tool calls{" "}
-          <span className="font-normal text-muted-foreground">
-            — the evidence every number is checked against
-          </span>
-        </h3>
-        <ul className="mt-2 space-y-1">
-          {toolCalls.length === 0 ? (
-            <li className="text-[11px] text-muted-foreground">none yet</li>
-          ) : (
-            toolCalls.map((call) => (
-              <li key={call.call_id} className="flex items-start gap-2 text-[11px]">
-                <Badge
-                  variant={call.ok ? "secondary" : "destructive"}
-                  className="shrink-0 font-mono text-[10px]"
-                >
-                  {call.call_id}
-                </Badge>
-                <span className="min-w-0">
-                  <span className="font-mono">{call.tool}</span>
-                  {call.ok ? null : (
-                    <span className="text-muted-foreground"> — unavailable: {call.reason}</span>
-                  )}
-                </span>
-              </li>
-            ))
-          )}
-        </ul>
+      <div
+        ref={scrollRef}
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        {visible.length === 0 ? (
+          <EmptyState
+            title={onlyIssues ? "No warnings or errors" : "Nothing yet"}
+            detail={
+              onlyIssues
+                ? "Every line in this run is informational."
+                : "Start a run to watch the agents work through the pipeline."
+            }
+          />
+        ) : (
+          <ol className="divide-y">
+            {visible.map((entry, index) => {
+              const previous = visible[index - 1];
+              const newStage = previous?.node !== entry.node;
+              return (
+                <li key={`${entry.at}-${index}`} className="px-4 py-2">
+                  {newStage ? (
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <span className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                        {STAGE_LABEL.get(entry.node) ?? humanize(entry.node)}
+                      </span>
+                      <span className="h-px flex-1 bg-border" />
+                    </div>
+                  ) : null}
+                  <div className="flex items-start gap-2">
+                    {entry.level === "warning" ? (
+                      <AlertTriangle className="mt-0.5 size-3 shrink-0 text-amber-500" />
+                    ) : entry.level === "error" ? (
+                      <XCircle className="mt-0.5 size-3 shrink-0 text-red-500" />
+                    ) : (
+                      <span className="mt-1.5 size-1 shrink-0 rounded-full bg-muted-foreground/40" />
+                    )}
+                    <p
+                      className={cn(
+                        "min-w-0 flex-1 text-xs leading-relaxed break-words",
+                        LEVEL_STYLE[entry.level] ?? "",
+                      )}
+                    >
+                      {entry.message}
+                    </p>
+                    <time
+                      dateTime={entry.at}
+                      className="shrink-0 text-[10px] text-muted-foreground tabular-nums"
+                    >
+                      {formatClock(entry.at)}
+                    </time>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
     </div>
   );

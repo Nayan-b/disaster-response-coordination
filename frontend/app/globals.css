@@ -49,6 +49,14 @@
 }
 
 :root {
+  /* `@theme inline` maps --font-sans/--font-geist-mono through, but nothing ever defined them, so
+     font-sans resolved to nothing and the console rendered in the UA serif-ish default. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Apple Color Emoji", sans-serif;
+  --font-geist-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -127,4 +135,45 @@
   html {
     @apply font-sans;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Leaflet
+   Leaflet ships its own light chrome. Left alone, its controls, attribution bar
+   and popups stay white-on-white in dark mode, which is the one part of the page
+   the theme switch appears not to reach.
+   --------------------------------------------------------------------------- */
+
+.leaflet-container {
+  background: var(--muted);
+  font-family: var(--font-sans);
+}
+
+.leaflet-control-zoom a,
+.leaflet-control-attribution {
+  background: color-mix(in oklch, var(--background) 92%, transparent) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.leaflet-control-zoom a {
+  color: var(--foreground) !important;
+  border-color: var(--border) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: var(--muted) !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--muted-foreground) !important;
+}
+
+.leaflet-bar {
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+
+/* The basemap is a light raster; in dark mode it otherwise glares against the shell. */
+.dark .leaflet-tile-pane {
+  filter: brightness(0.82) saturate(0.9);
 }

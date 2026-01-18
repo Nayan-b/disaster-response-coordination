@@ -1,23 +1,31 @@
 "use client";
 
 /**
- * The human-in-the-loop approval card.
+ * The human-in-the-loop gate.
  *
- * UI copy is deliberate: this is a *recommendation for review*, the reviewer can approve/edit/reject,
- * and approving records a decision rather than dispatching anything. Verified claims are shown with
- * the tool call that backs them, and anything the Fact-Check agent rejected is shown too — a
- * reviewer should see what was thrown out, not just what survived.
+ * The copy is deliberate: this is a *recommendation for review*, and approving records a decision
+ * rather than dispatching anything. Two things a reviewer must see before deciding are kept in
+ * view — what the fact-check threw out, and which sources were unavailable — because a brief is
+ * judged as much by what is missing from it as by what it says.
+ *
+ * Editing is per-action rather than a free-text blob. The old textarea silently re-paired edited
+ * text with the original action's rationale and claim ids by list position, so deleting a line
+ * re-attributed every citation below it. Here an edited action keeps its own rationale and
+ * citations, and a removed one takes its citations with it.
  */
 
+import { AlertTriangle, Check, Loader2, Pencil, Undo2, X } from "lucide-react";
 import { useState } from "react";
 
+import { ActionList, EngineBadge } from "@/components/RecommendationView";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionTitle } from "@/components/ui/data-display";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import type { ApprovalRequest } from "@/lib/types";
+import { humanize } from "@/lib/format";
+import type { AllocationAction, ApprovalRequest, Claim } from "@/lib/types";
 
 type Decision = "approved" | "edited" | "rejected";
 
@@ -30,146 +38,126 @@ export function ApprovalCard({
   request: ApprovalRequest;
   reviewer: string;
   submitting: boolean;
-  onDecide: (decision: Decision, notes: string, editedActions?: unknown[]) => void;
+  onDecide: (decision: Decision, notes: string, editedActions?: AllocationAction[]) => void;
 }) {
+  const recommendation = request.recommendation;
   const [notes, setNotes] = useState("");
   const [editing, setEditing] = useState(false);
-  const [draftActions, setDraftActions] = useState(() =>
-    (request.recommendation?.actions ?? []).map((a) => a.action).join("\n"),
-  );
+  const [draft, setDraft] = useState<AllocationAction[]>(() => recommendation?.actions ?? []);
 
-  const recommendation = request.recommendation;
   if (!recommendation) {
     return (
       <Alert variant="destructive">
-        <AlertTitle>No recommendation to review</AlertTitle>
-        <AlertDescription>
+        <AlertTriangle className="size-4" />
+        <AlertTitle className="text-xs">No recommendation to review</AlertTitle>
+        <AlertDescription className="text-[11px]">
           The run paused without a draft. Check the trace for the blocking reason.
         </AlertDescription>
       </Alert>
     );
   }
 
-  const claimById = new Map(request.verified_claims.map((c) => [c.claim_id, c]));
-  const isRuleBased = recommendation.drafted_by === "rule-based";
+  const claimById = new Map<string, Claim>(
+    request.verified_claims.map((claim) => [claim.claim_id, claim]),
+  );
+  // The drafter already folds unavailable sources into its caveats. Listing them again below, word
+  // for word, pads the card with a paragraph the reviewer has just read — so only gaps the caveats
+  // don't already carry get their own block.
+  const unavailableEntries = Object.entries(request.unavailable ?? {}).filter(
+    ([, reason]) => !recommendation.caveats.some((caveat) => caveat.includes(reason)),
+  );
+  const changed =
+    draft.length !== recommendation.actions.length ||
+    draft.some((action, index) => action.action !== recommendation.actions[index]?.action);
+
+  const cancelEdit = () => {
+    setDraft(recommendation.actions);
+    setEditing(false);
+  };
 
   const submitEdit = () => {
-    const lines = draftActions
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const edited = lines.map((action, index) => {
-      const original = recommendation.actions[index];
-      return {
-        priority: index + 1,
-        action,
-        rationale: original?.rationale ?? "Edited by the reviewing responder.",
-        supporting_claim_ids: original?.supporting_claim_ids ?? [],
-      };
-    });
-    onDecide("edited", notes, edited);
+    const cleaned = draft
+      .map((action) => ({ ...action, action: action.action.trim() }))
+      .filter((action) => action.action.length > 0)
+      .map((action, index) => ({ ...action, priority: index + 1 }));
+    onDecide("edited", notes, cleaned);
   };
 
   return (
-    <Card className="border-amber-500/50 shadow-sm">
-      <CardHeader className="gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge className="bg-amber-500 text-amber-950 hover:bg-amber-500">
-            Awaiting your approval
-          </Badge>
-          <Badge variant="outline" className="font-mono text-[10px]">
-            drafted by {recommendation.drafted_by}
-          </Badge>
-          {isRuleBased ? (
-            <Badge variant="outline" className="text-[10px]">
-              no LLM configured — deterministic draft
-            </Badge>
-          ) : null}
-        </div>
-        <CardTitle className="text-base leading-snug">{recommendation.headline}</CardTitle>
-        <p className="text-xs leading-relaxed text-muted-foreground">{recommendation.situation}</p>
-      </CardHeader>
+    <section
+      aria-label="Approval required"
+      // No `overflow-hidden` here: it would make this card the containing block for the sticky
+      // action bar below, pinning the bar to the card's own bottom instead of the panel's.
+      className="rounded-xl bg-card ring-2 ring-amber-500/60"
+    >
+      {/* Banner — the run has stopped, and this says so before anything else. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-t-xl bg-amber-500/12 px-3.5 py-2.5">
+        <span className="flex size-2 shrink-0 animate-pulse rounded-full bg-amber-500" />
+        <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+          Paused — awaiting your decision
+        </span>
+        <span className="ml-auto flex items-center gap-2">
+          <EngineBadge draftedBy={recommendation.drafted_by} />
+        </span>
+      </div>
 
-      <CardContent className="space-y-4">
-        <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="space-y-4 px-3.5 py-3.5">
+        <header className="space-y-1.5">
+          <h2 className="text-sm leading-snug font-semibold text-balance">
+            {recommendation.headline}
+          </h2>
+          <p className="text-xs leading-relaxed text-muted-foreground">{recommendation.situation}</p>
+        </header>
+
+        <section className="space-y-2">
+          <SectionTitle
+            action={
+              !editing ? (
+                <Button size="xs" variant="ghost" onClick={() => setEditing(true)} disabled={submitting}>
+                  <Pencil /> Edit
+                </Button>
+              ) : (
+                <Button size="xs" variant="ghost" onClick={cancelEdit} disabled={submitting}>
+                  <Undo2 /> Revert
+                </Button>
+              )
+            }
+          >
             Recommended actions
-          </h3>
+          </SectionTitle>
+
           {editing ? (
-            <div className="mt-2 space-y-2">
-              <Textarea
-                value={draftActions}
-                onChange={(event) => setDraftActions(event.target.value)}
-                rows={Math.max(4, recommendation.actions.length + 1)}
-                className="text-xs"
-                aria-label="Edit recommended actions, one per line"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                One action per line, highest priority first.
-              </p>
-            </div>
+            <ActionEditor actions={draft} onChange={setDraft} disabled={submitting} />
           ) : (
-            <ol className="mt-2 space-y-2.5">
-              {recommendation.actions.map((action) => (
-                <li key={`${action.priority}-${action.action}`} className="text-xs">
-                  <div className="flex gap-2">
-                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums">
-                      {action.priority}
-                    </span>
-                    <div className="min-w-0 space-y-1">
-                      <p className="font-medium leading-snug">{action.action}</p>
-                      <p className="leading-relaxed text-muted-foreground">{action.rationale}</p>
-                      {action.supporting_claim_ids.length > 0 ? (
-                        <ul className="space-y-0.5">
-                          {action.supporting_claim_ids.map((id) => {
-                            const claim = claimById.get(id);
-                            return (
-                              <li key={id} className="text-[11px] text-muted-foreground">
-                                <span className="font-mono text-emerald-600 dark:text-emerald-400">
-                                  ✓ {claim?.source_call_id ?? id}
-                                </span>{" "}
-                                {claim?.text ?? id}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : null}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <ActionList actions={recommendation.actions} claimById={claimById} />
           )}
         </section>
 
         {recommendation.caveats.length > 0 ? (
-          <>
-            <Separator />
-            <section>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Caveats
-              </h3>
-              <ul className="mt-2 space-y-1">
-                {recommendation.caveats.map((caveat) => (
-                  <li key={caveat} className="text-[11px] leading-relaxed text-muted-foreground">
-                    • {caveat}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </>
+          <section className="space-y-1.5">
+            <SectionTitle>Caveats</SectionTitle>
+            <ul className="space-y-1 rounded-lg bg-muted/50 px-3 py-2">
+              {recommendation.caveats.map((caveat) => (
+                <li key={caveat} className="text-[11px] leading-relaxed text-muted-foreground">
+                  • {caveat}
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
 
         {request.rejected_claims.length > 0 ? (
           <Alert variant="destructive">
+            <X className="size-4" />
             <AlertTitle className="text-xs">
-              {request.rejected_claims.length} claim(s) removed by the fact-check
+              {request.rejected_claims.length} claim
+              {request.rejected_claims.length === 1 ? "" : "s"} removed by the fact-check
             </AlertTitle>
             <AlertDescription>
               <ul className="mt-1 space-y-1">
                 {request.rejected_claims.map((claim) => (
-                  <li key={claim.claim_id} className="text-[11px]">
-                    <span className="font-mono">{claim.claim_id}</span>: {claim.rejection_reason}
+                  <li key={claim.claim_id} className="text-[11px] leading-relaxed">
+                    <span className="font-mono">{claim.claim_id}</span> — {claim.rejection_reason}
                   </li>
                 ))}
               </ul>
@@ -177,58 +165,70 @@ export function ApprovalCard({
           </Alert>
         ) : null}
 
+        {unavailableEntries.length > 0 ? (
+          <div className="rounded-lg bg-muted/50 px-3 py-2">
+            <p className="text-[11px] font-medium">Decide with these gaps in mind</p>
+            <ul className="mt-1 space-y-1">
+              {unavailableEntries.map(([role, reason]) => (
+                <li key={role} className="text-[11px] leading-relaxed text-muted-foreground">
+                  <span className="font-medium">{humanize(role)}:</span> {reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         <Separator />
 
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <label htmlFor="reviewer-notes" className="text-xs font-medium">
-            Notes {editing ? "" : "(optional)"}
+            Notes for the action log{" "}
+            <span className="font-normal text-muted-foreground">
+              {editing ? "(what you changed and why)" : "(optional)"}
+            </span>
           </label>
           <Textarea
             id="reviewer-notes"
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            placeholder="Context for the action log — why you approved, changed, or rejected this."
+            placeholder="Why you approved, changed, or rejected this."
             rows={2}
             className="text-xs"
           />
         </div>
 
-        <p className="rounded-md bg-muted/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="rounded-lg bg-muted/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
           {request.notice}
         </p>
 
-        <div className="flex flex-wrap gap-2">
+        {/* Sticky: the brief runs long, and a reviewer should never have to scroll to the bottom to
+            find out how to act on it. */}
+        <div className="sticky bottom-0 -mx-3.5 -mb-3.5 flex flex-wrap items-center gap-2 rounded-b-xl border-t bg-card/95 px-3.5 py-2.5 backdrop-blur">
           {editing ? (
             <>
-              <Button size="sm" onClick={submitEdit} disabled={submitting}>
-                Save &amp; approve edited
+              <Button size="sm" onClick={submitEdit} disabled={submitting || draft.length === 0}>
+                {submitting ? <Loader2 className="animate-spin" /> : <Check />}
+                Approve with edits
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setEditing(false)}
-                disabled={submitting}
-              >
-                Cancel edit
+              <Button size="sm" variant="outline" onClick={cancelEdit} disabled={submitting}>
+                Cancel
               </Button>
+              {changed ? (
+                <Badge variant="outline" className="text-[10px]">
+                  {draft.length} action{draft.length === 1 ? "" : "s"} · modified
+                </Badge>
+              ) : null}
             </>
           ) : (
             <>
               <Button
                 size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700"
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
                 onClick={() => onDecide("approved", notes)}
                 disabled={submitting}
               >
-                Approve
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setEditing(true)}
-                disabled={submitting}
-              >
-                Edit
+                {submitting ? <Loader2 className="animate-spin" /> : <Check />}
+                Approve as drafted
               </Button>
               <Button
                 size="sm"
@@ -236,15 +236,94 @@ export function ApprovalCard({
                 onClick={() => onDecide("rejected", notes)}
                 disabled={submitting}
               >
-                Reject
+                <X /> Reject
               </Button>
             </>
           )}
-          <span className="ml-auto self-center text-[11px] text-muted-foreground">
-            reviewing as <span className="font-medium">{reviewer}</span>
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            reviewing as <span className="font-medium text-foreground">{reviewer}</span>
           </span>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Per-action editing. Each row keeps its own rationale and supporting claim ids, so a reviewer can
+ * reword or drop an action without silently re-attributing anyone else's citations.
+ */
+function ActionEditor({
+  actions,
+  onChange,
+  disabled,
+}: {
+  actions: AllocationAction[];
+  onChange: (next: AllocationAction[]) => void;
+  disabled: boolean;
+}) {
+  const update = (index: number, text: string) =>
+    onChange(actions.map((action, i) => (i === index ? { ...action, action: text } : action)));
+
+  const remove = (index: number) =>
+    onChange(
+      actions
+        .filter((_, i) => i !== index)
+        .map((action, i) => ({ ...action, priority: i + 1 })),
+    );
+
+  const add = () =>
+    onChange([
+      ...actions,
+      {
+        priority: actions.length + 1,
+        action: "",
+        rationale: "Added by the reviewing responder.",
+        supporting_claim_ids: [],
+      },
+    ]);
+
+  return (
+    <div className="space-y-2">
+      {actions.map((action, index) => (
+        <div
+          key={index}
+          className="flex items-start gap-2 rounded-lg bg-card p-2 ring-1 ring-foreground/10"
+        >
+          <span className="mt-1.5 flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-[11px] font-semibold tabular-nums">
+            {index + 1}
+          </span>
+          <div className="min-w-0 flex-1 space-y-1">
+            <Textarea
+              value={action.action}
+              onChange={(event) => update(index, event.target.value)}
+              rows={2}
+              disabled={disabled}
+              className="text-xs"
+              aria-label={`Action ${index + 1}`}
+              placeholder="What should the team do?"
+            />
+            {action.supporting_claim_ids.length > 0 ? (
+              <p className="text-[10px] text-muted-foreground">
+                keeps citations:{" "}
+                <span className="font-mono">{action.supporting_claim_ids.join(", ")}</span>
+              </p>
+            ) : null}
+          </div>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => remove(index)}
+            disabled={disabled}
+            aria-label={`Remove action ${index + 1}`}
+          >
+            <X />
+          </Button>
+        </div>
+      ))}
+      <Button size="xs" variant="outline" onClick={add} disabled={disabled}>
+        Add an action
+      </Button>
+    </div>
   );
 }
