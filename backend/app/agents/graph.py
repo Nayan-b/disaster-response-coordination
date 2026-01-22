@@ -1,12 +1,14 @@
 """LangGraph wiring: Phase 3 orchestration + Phase 4 human-in-the-loop and checkpointing.
 
-    alert_monitor → imagery_retrieval → population_overlay → allocation_draft
-                                                                    ↓
-                                                              fact_check
-                                                                ↓      ↓
-                                                    (blocked) ←╯      human_gate  ← interrupt()
-                                                                          ↓
-                                                                     action_log
+    alert_monitor → imagery_retrieval → population_overlay → allocation_draft ←────┐
+                                                                    ↓               │
+                                                              fact_check            │
+                                                                ↓      ↓            │
+                                                       (blocked)      human_gate    │ retry
+                                                           ↓            ← interrupt()
+                                                       supervisor ──────────────────┘
+                                                           ↓ (stagnant | exhausted)
+                                                       action_log ← human_gate
 
 The gate is a real `interrupt()`, not a prompt asking the model to wait: the graph *stops*, the
 checkpointer persists the state, and nothing continues until a human resumes it with a decision.
@@ -16,6 +18,12 @@ the checkpoint, not in a process.
 `fact_check` routes to the gate only when verification passed. A draft whose load-bearing figure
 failed verification never reaches a human, because a recommendation with a hole in it is worse than
 no recommendation.
+
+It does get a second chance, though. A blocked draft routes to `supervisor`, which is the one place
+in this graph with a real fitness signal to iterate against — the fact-check is a deterministic
+pass/fail oracle, so the drafter can be told exactly which claims failed and asked again. The
+supervisor stops on a spent budget *or* on stagnation (a redraft rejected for the same claims as the
+attempt before it), so the loop cannot spin. See `nodes.supervisor`.
 """
 
 from __future__ import annotations
@@ -36,17 +44,22 @@ from app.agents.nodes import (
     fact_check,
     imagery_retrieval,
     population_overlay,
+    supervisor,
 )
 from app.agents.state import FloodState, TraceEvent
 from app.models import AllocationAction, ApprovalDecision
 
 CHECKPOINT_PATH = Path(
-    os.environ.get("FLOOD_CHECKPOINT_DB", config.REPO_ROOT / "data" / "checkpoints.sqlite")
+    os.environ.get(
+        "FLOOD_CHECKPOINT_DB", config.REPO_ROOT / "data" / "checkpoints.sqlite"
+    )
 )
 
 
 def _trace(node: str, message: str, level: str = "info") -> TraceEvent:
-    return TraceEvent(node=node, message=message, at=datetime.now(UTC).isoformat(), level=level)
+    return TraceEvent(
+        node=node, message=message, at=datetime.now(UTC).isoformat(), level=level
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -72,9 +85,17 @@ def human_gate(state: FloodState) -> dict[str, Any]:
         {
             "type": "approval_request",
             "event": state.get("event"),
-            "recommendation": recommendation.model_dump(mode="json") if recommendation else None,
-            "verified_claims": [c.model_dump(mode="json") for c in (fact.verified_claims if fact else [])],
-            "rejected_claims": [c.model_dump(mode="json") for c in (fact.rejected_claims if fact else [])],
+            "recommendation": (
+                recommendation.model_dump(mode="json") if recommendation else None
+            ),
+            "verified_claims": [
+                c.model_dump(mode="json")
+                for c in (fact.verified_claims if fact else [])
+            ],
+            "rejected_claims": [
+                c.model_dump(mode="json")
+                for c in (fact.rejected_claims if fact else [])
+            ],
             "unavailable": state.get("unavailable") or {},
             "drafted_by": state.get("engine"),
             # Restated at the gate so an approving human is never in doubt about what they are
@@ -86,7 +107,11 @@ def human_gate(state: FloodState) -> dict[str, Any]:
         }
     )
 
-    payload = decision_payload if isinstance(decision_payload, dict) else {"decision": str(decision_payload)}
+    payload = (
+        decision_payload
+        if isinstance(decision_payload, dict)
+        else {"decision": str(decision_payload)}
+    )
     decision = str(payload.get("decision", "rejected")).lower()
     if decision not in {"approved", "edited", "rejected"}:
         decision = "rejected"
@@ -122,7 +147,9 @@ def human_gate(state: FloodState) -> dict[str, Any]:
     # An edit replaces the actions but keeps the drafting engine on record, so the log shows both
     # who drafted and who changed it.
     if approval.decision == "edited" and edited_actions and recommendation is not None:
-        out["recommendation"] = recommendation.model_copy(update={"actions": edited_actions})
+        out["recommendation"] = recommendation.model_copy(
+            update={"actions": edited_actions}
+        )
     return out
 
 
@@ -133,6 +160,14 @@ def action_log(state: FloodState) -> dict[str, Any]:
     summary = "no recommendation"
     if recommendation is not None:
         summary = f"{len(recommendation.actions)} action(s) — {recommendation.headline}"
+
+    # A blocked run should record how hard it tried, not just that it failed — otherwise "blocked"
+    # reads the same whether the drafter was asked once or three times.
+    if approval is None:
+        attempts = state.get("draft_attempts") or 1
+        outcome = state.get("supervisor_outcome") or "blocked"
+        summary = f"{summary} · {attempts} draft attempt(s), stopped: {outcome}"
+
     return {
         "trace": [
             _trace(
@@ -153,12 +188,26 @@ def _after_alert(state: FloodState) -> Literal["imagery_retrieval", "action_log"
     return "imagery_retrieval" if state.get("event") else "action_log"
 
 
-def _after_factcheck(state: FloodState) -> Literal["human_gate", "action_log"]:
-    """Only a draft that survived verification reaches a human."""
+def _after_factcheck(state: FloodState) -> Literal["human_gate", "supervisor"]:
+    """Only a draft that survived verification reaches a human.
+
+    A blocked draft goes to the supervisor rather than straight to the log: it may be repairable, and
+    the supervisor is what decides. The invariant is unchanged — nothing that failed verification
+    reaches `human_gate` from here.
+    """
     result = state.get("fact_check")
     if result is not None and not result.passed:
-        return "action_log"
+        return "supervisor"
     return "human_gate"
+
+
+def _after_supervisor(state: FloodState) -> Literal["allocation_draft", "action_log"]:
+    """Redraft, or record the block and stop. The supervisor has already made the call."""
+    return (
+        "allocation_draft"
+        if state.get("supervisor_outcome") == "retry"
+        else "action_log"
+    )
 
 
 def build_graph(checkpointer: Any | None = None):
@@ -170,6 +219,7 @@ def build_graph(checkpointer: Any | None = None):
     graph.add_node("population_overlay", population_overlay)
     graph.add_node("allocation_draft", allocation_draft)
     graph.add_node("fact_check", fact_check)
+    graph.add_node("supervisor", supervisor)
     graph.add_node("human_gate", human_gate)
     graph.add_node("action_log", action_log)
 
@@ -179,6 +229,7 @@ def build_graph(checkpointer: Any | None = None):
     graph.add_edge("population_overlay", "allocation_draft")
     graph.add_edge("allocation_draft", "fact_check")
     graph.add_conditional_edges("fact_check", _after_factcheck)
+    graph.add_conditional_edges("supervisor", _after_supervisor)
     graph.add_edge("human_gate", "action_log")
     graph.add_edge("action_log", END)
 

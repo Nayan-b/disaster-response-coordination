@@ -53,7 +53,9 @@ def _alert(level: str | None) -> str:
 
 @app.command()
 def events(
-    days: int = typer.Option(30, help="Lookback window in days."),
+    days: int = typer.Option(
+        config.EVENTS_DEFAULT_LOOKBACK_DAYS, help="Lookback window in days."
+    ),
     alert_level: str = typer.Option("Orange,Red", help="Comma-separated: Green,Orange,Red."),
     refresh: bool = typer.Option(False, "--refresh", help="Bypass the cache."),
 ) -> None:

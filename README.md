@@ -7,6 +7,16 @@ responder must approve before it is finalized.**
 Nothing here executes a response action. Approving a recommendation records a decision; it does not
 dispatch anything.
 
+![Console paused at the human gate: a fact-checked recommendation for a live GDACS flood event in Italy, with NASA GIBS flood imagery and the affected-area bbox on the map](docs/screenshots/approval-gate.png)
+
+_A live GDACS event, run through the pipeline and paused at the human gate. Every figure in the
+brief cites the tool call it came from._
+
+![Evidence tab: four claims verified by the Fact-Check stage, each linked to the tool call it was checked against, above the append-only tool-call log](docs/screenshots/evidence.png)
+
+_The Evidence tab: each claim the Fact-Check stage verified, and the tool-call log it was checked
+against._
+
 ---
 
 ## Why this exists
@@ -29,22 +39,26 @@ any claim that isn't — before a human ever sees it.
 ## What it does
 
 ```
-GDACS alerts ─┐
+GDACS alerts ─┐                                  ┌── retry ──┐
 NASA CMR-STAC ├─→ tools ─→ LangGraph agents ─→ fact-check ─→ HUMAN APPROVAL ─→ action log
-NASA GIBS     │                                    │              (approve /
-WorldPop     ─┘                          (removes unverifiable      edit /
-                                          claims; can block)        reject)
+NASA GIBS     │                 ↑                   │  ↓           (approve /
+WorldPop     ─┘                 └─ supervisor ←─ (blocked)           edit /
+                                   (repairable? stagnant? spent?)    reject)
 ```
 
-1. **Alert Monitor** queries GDACS for active flood events above a severity threshold and picks the
-   most urgent.
+1. **Alert Monitor** queries GDACS for active flood events at the selected alert levels — the last 5
+   days, capped at the 10 most urgent — and picks which to work. The cap is applied after ranking by
+   alert level and recency, and a truncated list reports how many matched.
 2. **Imagery Retrieval** derives the affected-area extent, searches NASA CMR-STAC for flood granules,
    and builds a GIBS tile layer for the map.
 3. **Population Overlay** sums WorldPop population inside the actual flood polygon.
 4. **Allocation Draft** writes a prioritized recommendation citing only evidence it was given.
 5. **Fact-Check** verifies every claim against the tool-call log and strips or blocks what it can't
    verify.
-6. **Human gate** pauses the graph via LangGraph `interrupt()`. The run is checkpointed, so a
+6. **Supervisor** catches a blocked draft and decides whether it is repairable: it names the rejected
+   claims and their reasons, then sends it back to be redrafted. It stops on a spent attempt budget
+   or on stagnation, and a draft that never passes verification still never reaches a human.
+7. **Human gate** pauses the graph via LangGraph `interrupt()`. The run is checkpointed, so a
    responder can close the tab and resume review later.
 
 ---
@@ -53,12 +67,12 @@ WorldPop     ─┘                          (removes unverifiable      edit /
 
 All live, all free, no keys required for what this app does.
 
-| Source | Provides | Notes |
-|---|---|---|
-| **GDACS** (UN + EU JRC) | Active flood events, alert levels, affected-area polygons | No key |
-| **NASA CMR-STAC** (`LANCEMODIS`) | MODIS/VIIRS flood-product granule references | Earthdata login needed only to *download* granules |
-| **NASA GIBS** | Pre-rendered flood imagery tiles, 2021→present | No auth; this is what the map displays |
-| **WorldPop** | 1 km UN-adjusted population rasters | Cached to disk, summed locally |
+| Source                           | Provides                                                  | Notes                                              |
+| -------------------------------- | --------------------------------------------------------- | -------------------------------------------------- |
+| **GDACS** (UN + EU JRC)          | Active flood events, alert levels, affected-area polygons | No key                                             |
+| **NASA CMR-STAC** (`LANCEMODIS`) | MODIS/VIIRS flood-product granule references              | Earthdata login needed only to _download_ granules |
+| **NASA GIBS**                    | Pre-rendered flood imagery tiles, 2021→present            | No auth; this is what the map displays             |
+| **WorldPop**                     | 1 km UN-adjusted population rasters                       | Cached to disk, summed locally                     |
 
 ---
 
@@ -74,10 +88,10 @@ Compose starts Postgres first and waits for it to be genuinely ready, brings up 
 for its health check, then starts the dashboard. No key is required; without one the stack runs on
 the rule-based engine. To use Claude, `cp .env.example .env` and set `ANTHROPIC_API_KEY`.
 
-| Service | Port | Notes |
-|---|---|---|
-| `frontend` | 3000 | Next.js dashboard |
-| `backend` | 8088 | FastAPI + SSE |
+| Service    | Port  | Notes                                |
+| ---------- | ----- | ------------------------------------ |
+| `frontend` | 3000  | Next.js dashboard                    |
+| `backend`  | 8088  | FastAPI + SSE                        |
 | `postgres` | 55432 | Checkpoint store, exposed for `psql` |
 
 Two named volumes persist across restarts: `postgres-data` (paused runs) and `flood-cache`
@@ -122,8 +136,13 @@ npm run dev            # → http://localhost:3000
 Open http://localhost:3000, pick a flood event, and watch the agents work. When the run pauses, the
 approval card appears.
 
-> **Port 8088, not 8000** — port 8000 is occupied by an unrelated service on the original dev
-> machine. Change it freely; just keep `NEXT_PUBLIC_API_BASE` in sync.
+Event-list defaults are `FLOOD_EVENTS_LOOKBACK_DAYS=5` and `FLOOD_EVENTS_MAX_RESULTS=10` (`0` disables
+the cap). `FLOOD_MAX_DRAFT_ATTEMPTS=3` caps how many times the supervisor may have a blocked draft
+redrafted. The frontend keeps its own copies in `app/page.tsx` in step with these.
+
+Alert levels are chosen in the dashboard (Red/Orange/Green toggles on the events rail), defaulting to
+Red+Orange. GDACS rates most active floods Green — minor or localized — so the default keeps the
+console on events that warrant coordinated allocation; toggle Green on for full situational awareness.
 
 ### Without the frontend
 
@@ -150,11 +169,11 @@ uv run python -m app.mcp_server --http # streamable HTTP
 
 Three engines, one interface. The system runs on any of them:
 
-| Provider | Configure with | `drafted_by` shows |
-|---|---|---|
-| **Anthropic** (direct) | `ANTHROPIC_API_KEY` | `claude-opus-5` |
+| Provider                     | Configure with       | `drafted_by` shows                   |
+| ---------------------------- | -------------------- | ------------------------------------ |
+| **Anthropic** (direct)       | `ANTHROPIC_API_KEY`  | `claude-opus-5`                      |
 | **OpenRouter** (400+ models) | `OPENROUTER_API_KEY` | `openrouter:anthropic/claude-opus-5` |
-| **None** — deterministic | *(nothing)* | `rule-based` |
+| **None** — deterministic     | _(nothing)_          | `rule-based`                         |
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...           # Anthropic direct
@@ -168,7 +187,27 @@ even when keys are present.
 
 OpenRouter model ids are vendor-namespaced (`anthropic/claude-opus-5`, `openai/gpt-5.2`,
 `google/gemini-2.5-pro`). **Pick one that supports structured outputs** — drafting needs
-schema-constrained JSON, and roughly 335 of OpenRouter's ~413 models qualify.
+schema-constrained JSON, and only about 336 of OpenRouter's ~422 models qualify.
+
+This is the one misconfiguration that fails _quietly_, so it is worth checking before you wonder why
+every draft says `rule-based`. OpenRouter advertises two separate capabilities, and a model can have
+one without the other:
+
+| supported_parameters                           | what happens                                                                                                                                                      |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response_format` **and** `structured_outputs` | the schema is enforced — works                                                                                                                                    |
+| `response_format` only                         | the call succeeds, JSON comes back, **the schema is ignored** — the model invents its own keys, validation fails, and the run silently falls back to `rule-based` |
+
+Check before you configure a model:
+
+```bash
+curl -s https://openrouter.ai/api/v1/models \
+  | jq -r '.data[] | select(.id=="MODEL/ID") | .supported_parameters | contains(["structured_outputs"])'
+```
+
+When the fallback does happen the reason is recorded rather than swallowed: it appears as
+`allocation_llm` under the run's unavailable sources, as a caveat on the recommendation, and as an
+"LLM failed — fell back" badge beside the engine name.
 
 The rule-based path is a real fallback, not a stub: it produces the same structured objects from
 the same tool results, so the entire pipeline — fact-check and approval gate included — is runnable
@@ -176,7 +215,7 @@ and testable with no key at all. It is also what the system falls back to if a c
 errors mid-run, with the reason recorded as a caveat rather than silently swallowed.
 
 **Provenance survives the gateway.** OpenRouter may route a request to a different upstream than the
-one requested — that is the point of it — so `drafted_by` reports the model that *actually answered*,
+one requested — that is the point of it — so `drafted_by` reports the model that _actually answered_,
 read from the response, not the one that was asked for. In a system where every number is traceable,
 "which model wrote this" shouldn't be a guess.
 
@@ -208,14 +247,14 @@ plausible, unsourced figure. Verification here is lookup and arithmetic.
 Tested adversarially — it accepts an honest figure and a rounded one, and rejects all four attack
 shapes, including the subtle one:
 
-| Claim | Verdict |
-|---|---|
-| `2,063,552 people`, cites the real population call | accepted |
-| `~2.06M people` (rounded within 0.5%) | accepted |
+| Claim                                                                      | Verdict      |
+| -------------------------------------------------------------------------- | ------------ |
+| `2,063,552 people`, cites the real population call                         | accepted     |
+| `~2.06M people` (rounded within 0.5%)                                      | accepted     |
 | `4,500,000 people`, citing a **real** call that never produced that number | **rejected** |
-| A number with no citation | **rejected** |
-| Cites a call that doesn't exist | **rejected** |
-| Cites a call that **failed** | **rejected** |
+| A number with no citation                                                  | **rejected** |
+| Cites a call that doesn't exist                                            | **rejected** |
+| Cites a call that **failed**                                               | **rejected** |
 
 When a load-bearing claim is rejected, the draft is **blocked from reaching the human** — a
 recommendation with a hole in it is worse than no recommendation.
@@ -228,12 +267,12 @@ recommendation with a hole in it is worse than no recommendation.
 backend/
   app/
     sources/       GDACS, CMR-STAC/GIBS, WorldPop clients (no LLM)
-    agents/        LangGraph nodes, deterministic fact-check, LLM providers
+    agents/        LangGraph nodes, deterministic fact-check, supervisor, LLM providers
     tools.py       one registry of capabilities, shared by MCP and the agents
     mcp_server.py  MCP adapter over that registry
     api.py         FastAPI + SSE streaming + approval endpoint
     cli.py         inspect any source from the terminal
-  tests/           108 offline (committed fixtures) + 9 live
+  tests/           128 offline (committed fixtures) + 9 live
   Dockerfile
 frontend/
   app/page.tsx     map-first dashboard
@@ -271,7 +310,7 @@ aspirational.
 
 ```bash
 cd backend
-uv run pytest           # 108 offline tests, no network
+uv run pytest           # 128 offline tests, no network
 uv run pytest -m live   # 9 tests against the real APIs
 ```
 
@@ -279,7 +318,7 @@ Fixtures are deliberately hostile — hostile feature ordering, a zip archive li
 dynamic asset keys — so a regression to a naive implementation can't pass.
 
 The live tests are the early-warning system for upstream API changes; two of them are documentary,
-and will fail if GDACS or NASA *improve* their behavior, signaling that a workaround can be removed.
+and will fail if GDACS or NASA _improve_ their behavior, signaling that a workaround can be removed.
 
 ---
 

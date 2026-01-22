@@ -88,7 +88,7 @@ annual products). Bypass with `--refresh` or `FLOOD_CACHE_DISABLED=1`.
 ## Tests
 
 ```bash
-uv run pytest           # 108 offline tests, replays committed fixtures
+uv run pytest           # 128 offline tests, replays committed fixtures
 uv run pytest -m live   # 9 opt-in tests against the real APIs
 ```
 

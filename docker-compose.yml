@@ -23,7 +23,11 @@ services:
     healthcheck:
       # -d matters: without it pg_isready checks a database named after the user, which reports
       # ready before our actual database exists, and the backend then races the first connection.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flood} -d ${POSTGRES_DB:-flood}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-flood} -d ${POSTGRES_DB:-flood}",
+        ]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -39,13 +43,15 @@ services:
       # LLM providers — all optional. With none set the graph drafts with the deterministic
       # rule-based engine and the whole pipeline still works.
       # Precedence: FLOOD_LLM_PROVIDER wins; otherwise Anthropic-direct beats OpenRouter.
-      FLOOD_LLM_PROVIDER: ${FLOOD_LLM_PROVIDER:-}
+      FLOOD_LLM_PROVIDER: ${FLOOD_LLM_PROVIDER:-openrouter}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       FLOOD_CLAUDE_MODEL: ${FLOOD_CLAUDE_MODEL:-claude-opus-5}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      FLOOD_OPENROUTER_MODEL: ${FLOOD_OPENROUTER_MODEL:-anthropic/claude-opus-5}
+      FLOOD_OPENROUTER_MODEL: ${FLOOD_OPENROUTER_MODEL:-stealth/ox-alpha}
       # Origins allowed to call the API from a browser.
       FLOOD_CORS_ORIGINS: ${FLOOD_CORS_ORIGINS:-http://localhost:3000}
+    env_file:
+      - .env
     volumes:
       # WorldPop rasters are ~100 MB per country and static once fetched. Persisting the cache
       # keeps container restarts from re-downloading them.

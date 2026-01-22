@@ -138,6 +138,10 @@ export interface RunState {
   engine: string | null;
   status: string | null;
   tool_calls: ToolCallSummary[];
+  /** How many drafts this run produced. 1 on the happy path; >1 means a supervised repair. */
+  draft_attempts: number | null;
+  /** Set only when the supervisor ran: "retry" | "stagnant" | "exhausted". */
+  supervisor_outcome: string | null;
 }
 
 export interface ApprovalRequest {

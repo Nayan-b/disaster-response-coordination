@@ -17,7 +17,7 @@ uv run python -m app.cli events --days 45          # live GDACS flood events
 uv run python -m app.cli report --event-id <id>    # all three sources + provenance
 uv run python -m app.cli cache                     # cache size by source
 
-uv run pytest                                      # 108 offline tests (committed fixtures)
+uv run pytest                                      # 128 offline tests (committed fixtures)
 uv run pytest -m live                              # 9 tests against the real APIs
 
 uv run uvicorn app.api:app --port 8088 --reload    # API (see port note below)
@@ -37,7 +37,6 @@ docker compose logs -f backend
 docker compose down -v         # stop and wipe volumes
 ```
 
-**Port 8088, not 8000.** Port 8000 is occupied by an unrelated Django project on this machine. The
 frontend reads `NEXT_PUBLIC_API_BASE` from `frontend/.env.local`.
 
 ## Architecture
@@ -74,12 +73,47 @@ rules are enforced, not requested: a numeric claim must cite a tool call from th
 must have succeeded, and the number must actually appear in its result. An unavailable source cannot
 be claimed about at all. Do not "improve" this by delegating verification to a model.
 
+**The supervisor may redraft a blocked draft, but must never let one through.** `fact_check` routes a
+failed draft to `supervisor` (adapted from the supervisor component of NVIDIA's AVO,
+arXiv:2603.24517), which either issues a repair directive and loops back to `allocation_draft`, or
+stops. Two invariants:
+
+- *Nothing that failed verification reaches `human_gate`.* The loop re-runs the fact-check from
+  scratch each pass; the gate is only ever reached through `passed=True`.
+- *The loop must be able to stop.* It halts on a spent budget (`FLOOD_MAX_DRAFT_ATTEMPTS`, default 3)
+  **and** on stagnation — a redraft rejected for the same claim ids as the attempt before it. Keep
+  both: the stagnation check is what protects the rule-based drafter, which is deterministic and
+  would otherwise emit a byte-identical draft for every remaining attempt.
+
+The repair directive is deliberately concrete — the failed claim ids, the verbatim rejection reasons,
+and the exhaustive list of ids that may be cited. A vague "try again" gives the model nothing to act
+on and burns the budget. In practice the loop only bites on the LLM path: the rule-based drafter
+builds every figure from a claim and so passes verification by construction.
+
+`allocation_draft` does not call any tool, which is why looping it is safe — the tool-call log and
+therefore the claim-id space stay fixed across attempts.
+
 **Geometry never crosses the model boundary.** A GDACS affected-area polygon is ~880 KB. Tools take
 `event_id`/`episode_id` and resolve geometry server-side; `get_flood_extent` returns bbox + area, not
 coordinates. This keeps the polygon out of the LLM context, the checkpoint, and the SSE stream.
 
 **Missing data is an error, never an estimate.** Sources raise `SourceUnavailable`; tools return
 `{ok: false, unavailable: true, reason}`. Nothing interpolates or substitutes a fallback number.
+
+**The event-list cap is applied after ranking, and never silently.** `list_flood_events` returns at
+most `EVENTS_MAX_RESULTS` (10) events from a `EVENTS_DEFAULT_LOOKBACK_DAYS` (5) day window. GDACS does
+not return events in severity order, so truncating the raw list would drop a Red event in favour of an
+Orange one listed earlier — sort by `_urgency_key` first. A truncated result sets `truncated` and
+reports `total_matched`; the trace and the events rail both say "N of M". And `alert_monitor` passes
+`max_events: 0` when a specific `event_id` was requested, because a direct lookup is not a triage — a
+valid event at position 11 must not come back as "not in the window".
+
+**Alert levels are a session choice, not a constant.** The rail's Red/Orange/Green toggles drive both
+`/api/events` and the run's `alert_levels`. They must stay in step: a run started with narrower levels
+than the picker showed reports a listed event as "not in the window". The toggles also refuse to reach
+an empty selection, because `tool_list_flood_events` treats an empty level list as its Orange+Red
+default — an empty picker would silently show a filtered list. Default is Red+Orange: GDACS rates the
+large majority of active floods Green (28 of 29 in a recent 5-day window).
 
 **Data-source traps** (each pinned by a test — see `backend/README.md` for the full table):
 
@@ -119,6 +153,12 @@ Three engines behind one interface: Anthropic direct, OpenRouter, and the rule-b
   structured-output `.parse()` path rejects it outright.
 - Structured output is `response_format: {type: "json_schema", strict: true}` — the OpenAI dialect.
   `_schema_for()` emits a schema valid for both providers.
+- **`response_format` support is not `structured_outputs` support.** OpenRouter lists them as
+  separate `supported_parameters`, and ~86 of its ~422 models have the first without the second.
+  Those models accept the request, return 200, and emit valid JSON with *their own* key names — so
+  `model_validate` fails and the run falls back to rule-based. The failure looks like a bug in this
+  code, which is why `structured_completion` appends a hint naming the model and the capability to
+  check. Diagnosed once already on `stealth/ox-alpha`.
 - The token budget goes out as `max_completion_tokens` (langchain-openai aliases it); OpenRouter
   accepts it.
 - Don't send `temperature` here either, even though OpenRouter advertises it for Opus 5 — keeping

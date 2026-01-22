@@ -17,7 +17,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BriefPanel } from "@/components/BriefPanel";
-import { EventRail } from "@/components/EventRail";
+import { EventRail, type AlertLevel } from "@/components/EventRail";
 import { EvidencePanel } from "@/components/EvidencePanel";
 import { SituationPanel } from "@/components/SituationPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -59,15 +59,24 @@ const FloodMap = dynamic(() => import("@/components/FloodMap").then((m) => m.Flo
 });
 
 const REVIEWER = "responder";
-const LOOKBACK_DAYS = 45;
+// Kept in step with the backend's own defaults (`EVENTS_DEFAULT_LOOKBACK_DAYS` /
+// `EVENTS_MAX_RESULTS`). A short window surfaces what is happening now rather than burying it under
+// events whose window has already closed; the cap keeps triage to the most urgent handful.
+const LOOKBACK_DAYS = 5;
+const MAX_EVENTS = 10;
+// GDACS rates the large majority of active floods Green (minor or localized), so the default stays
+// on the levels that warrant coordinated allocation. The rail can widen it per session.
+const DEFAULT_LEVELS: AlertLevel[] = ["Red", "Orange"];
 
 type TabId = "brief" | "situation" | "evidence" | "trace";
 
 export default function Dashboard() {
   const [health, setHealth] = useState<Health | null>(null);
   const [events, setEvents] = useState<FloodEvent[]>([]);
+  const [eventsMatched, setEventsMatched] = useState<number | null>(null);
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [loadingEvents, setLoadingEvents] = useState(true);
+  const [levels, setLevels] = useState<AlertLevel[]>(DEFAULT_LEVELS);
 
   const [threadId, setThreadId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
@@ -88,15 +97,32 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchHealth().then(setHealth).catch(() => setHealth(null));
-    fetchEvents(LOOKBACK_DAYS)
-      .then((data) => {
-        setEvents(data.events);
-        if (data.unavailable) setEventsError(data.unavailable);
-      })
-      .catch((err: Error) => setEventsError(err.message))
-      .finally(() => setLoadingEvents(false));
     return () => abortRef.current?.();
   }, []);
+
+  // Depend on the joined string, not the array: an array literal changes identity every render and
+  // would refetch forever. `stale` guards against a slow response for a level set the reader has
+  // already changed away from landing on top of a newer one.
+  const levelsKey = levels.join(",");
+  useEffect(() => {
+    let stale = false;
+    fetchEvents(LOOKBACK_DAYS, MAX_EVENTS, levelsKey)
+      .then((data) => {
+        if (stale) return;
+        setEvents(data.events);
+        setEventsMatched(data.truncated ? (data.total_matched ?? null) : null);
+        if (data.unavailable) setEventsError(data.unavailable);
+      })
+      .catch((err: Error) => {
+        if (!stale) setEventsError(err.message);
+      })
+      .finally(() => {
+        if (!stale) setLoadingEvents(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [levelsKey]);
 
   // Switching tabs — or a decision landing — puts new content in the panel, so start it at the top.
   // Without this, approving leaves the panel scrolled to where the gate's buttons were and the
@@ -113,6 +139,14 @@ export default function Dashboard() {
     }, 500);
     return () => window.clearInterval(id);
   }, [running]);
+
+  // Showing the skeleton is caused by the toggle, so it belongs to the handler rather than to the
+  // effect that reacts to it.
+  const changeLevels = useCallback((next: AlertLevel[]) => {
+    setLevels(next);
+    setLoadingEvents(true);
+    setEventsError(null);
+  }, []);
 
   const run = useCallback(async (event?: FloodEvent) => {
     abortRef.current?.();
@@ -133,6 +167,7 @@ export default function Dashboard() {
         event_id: event?.event_id ?? null,
         episode_id: event?.episode_id ?? null,
         lookback_days: LOOKBACK_DAYS,
+        alert_levels: levels,
         reviewer: REVIEWER,
       });
       setThreadId(started.thread_id);
@@ -165,7 +200,8 @@ export default function Dashboard() {
       setRunning(false);
       setFinished(true);
     }
-  }, []);
+    // `levels` is read when the run starts, so a stale closure would triage the wrong level set.
+  }, [levels]);
 
   const decide = useCallback(
     async (
@@ -218,32 +254,34 @@ export default function Dashboard() {
   // Per-node trace rollup for the stepper. The summary line is the *worst* line the stage produced,
   // not the last one — a stage badged amber whose caption reads like routine progress tells the
   // reader nothing about why it is amber.
-  const { levels, messages } = useMemo(() => {
-    const levels: Record<string, "info" | "warning" | "error"> = {};
-    const messages: Record<string, string> = {};
+  // Named `traceLevels` rather than `levels` — that name belongs to the alert-level selection above,
+  // and these are trace severities, an unrelated thing.
+  const { traceLevels, traceMessages } = useMemo(() => {
+    const traceLevels: Record<string, "info" | "warning" | "error"> = {};
+    const traceMessages: Record<string, string> = {};
     const rank = { info: 0, warning: 1, error: 2 } as const;
     for (const entry of trace) {
-      const current = levels[entry.node];
+      const current = traceLevels[entry.node];
       if (!current || rank[entry.level] >= rank[current]) {
-        levels[entry.node] = entry.level;
-        messages[entry.node] = entry.message;
+        traceLevels[entry.node] = entry.level;
+        traceMessages[entry.node] = entry.message;
       }
     }
-    return { levels, messages };
+    return { traceLevels, traceMessages };
   }, [trace]);
 
   const stages = useMemo(
     () =>
       deriveStages({
         completed,
-        levels,
-        messages,
+        levels: traceLevels,
+        messages: traceMessages,
         running,
         awaitingApproval: Boolean(approval),
         status: state?.status ?? null,
         finished,
       }),
-    [completed, levels, messages, running, approval, state?.status, finished],
+    [completed, traceLevels, traceMessages, running, approval, state?.status, finished],
   );
 
   const verifiedClaims = state?.fact_check?.verified_claims ?? approval?.verified_claims ?? [];
@@ -365,6 +403,9 @@ export default function Dashboard() {
             selectedId={selectedEventId}
             running={running}
             lookbackDays={LOOKBACK_DAYS}
+            totalMatched={eventsMatched}
+            levels={levels}
+            onLevelsChange={changeLevels}
             onSelect={run}
           />
         </section>
@@ -396,6 +437,8 @@ export default function Dashboard() {
                 rejected={rejectedClaims}
                 toolCalls={toolCalls}
                 blockingReason={state?.fact_check?.blocking_reason ?? null}
+                draftAttempts={state?.draft_attempts ?? null}
+                supervisorOutcome={state?.supervisor_outcome ?? null}
               />
             ) : (
               <div className="h-full">
@@ -409,8 +452,9 @@ export default function Dashboard() {
       {/* The event rail has nowhere to live on a narrow screen; the triage button is the way in. */}
       <div className="border-t px-4 py-2 lg:hidden">
         <p className="text-[11px] text-muted-foreground">
-          {events.length} event{events.length === 1 ? "" : "s"} in the last {LOOKBACK_DAYS} days —
-          use <span className="font-medium">Run triage</span> to work the most urgent one.
+          {events.length} event{events.length === 1 ? "" : "s"}
+          {eventsMatched ? ` of ${eventsMatched}` : ""} in the last {LOOKBACK_DAYS} days — use{" "}
+          <span className="font-medium">Run triage</span> to work the most urgent one.
         </p>
       </div>
     </main>

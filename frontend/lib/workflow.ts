@@ -8,6 +8,12 @@
  * Status is derived from what the stream actually reports — `node_complete` frames, trace levels,
  * whether an interrupt is pending, and the run's terminal status. Nothing here guesses: a stage the
  * graph routed around is shown as skipped, not as done.
+ *
+ * The pipeline is no longer strictly linear: `supervisor` can send the run back to
+ * `allocation_draft`, so those stages may complete more than once. Completion is tracked as a set,
+ * which collapses repeats — the stepper shows how far the run got, and the attempt count is surfaced
+ * separately rather than by drawing the loop. On a run where the fact-check passed first time, the
+ * supervisor never executes and renders as *skipped*, which is exactly what happened.
  */
 
 export type StageStatus =
@@ -51,6 +57,12 @@ export const STAGES: Stage[] = [
     id: "fact_check",
     label: "Fact-Check",
     blurb: "Deterministic check: every number must trace to a successful tool call.",
+  },
+  {
+    id: "supervisor",
+    label: "Supervisor",
+    blurb:
+      "Only runs when the fact-check blocked the draft: decides whether to redraft against the rejection reasons, or stop.",
   },
   {
     id: "human_gate",

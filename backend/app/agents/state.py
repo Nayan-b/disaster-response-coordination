@@ -60,3 +60,16 @@ class FloodState(TypedDict, total=False):
     approval: ApprovalDecision | None
     engine: str
     status: str
+
+    # --- supervision of the draft → fact-check loop ---
+    # Plain values rather than pydantic models, deliberately: nothing here needs to be registered in
+    # CHECKPOINTED_TYPES, and the loop state stays legible in a checkpoint dump.
+    #
+    # `draft_attempts` counts drafts produced, not repairs requested, so it is 1 on the happy path.
+    # `repair_directive` is the supervisor's instruction to the next draft — None on the first pass.
+    # `last_rejected_ids` is what the fact-check rejected on the previous attempt, kept solely so the
+    # supervisor can tell a converging repair from a loop that is repeating itself.
+    draft_attempts: int
+    repair_directive: str | None
+    last_rejected_ids: list[str]
+    supervisor_outcome: str | None  # retry | stagnant | exhausted

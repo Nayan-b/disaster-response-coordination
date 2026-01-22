@@ -1,0 +1,1237 @@
+<title>Flood Response Coordinator</title>
+<meta name="description" content="How the system works — in plain language, then in depth.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* ---------- tokens: light is the base, both themes defined at token level ---------- */
+  :root {
+    --ink:      #10161c;
+    --ink-2:    #3b4a57;
+    --ink-3:    #6b7c8a;
+    --paper:    #f5f7f8;
+    --card:     #ffffff;
+    --sunk:     #eceff2;
+    --rule:     #d8dfe4;
+    --rule-2:   #c2ccd3;
+    --deep:     #0f4c5c;
+    --deep-soft:#e2eef1;
+    --alert:    #d95f0e;
+    --alert-soft:#fbeade;
+    --red:      #b3261e;
+    --amber:    #a15c07;
+    --green:    #0d6b4f;
+
+    --measure: 44rem;   /* the content column: tables, run log, code */
+    --prose:   34.5rem; /* running text only — keeps lines near 65 characters */
+    --step--1: 0.8125rem;
+    --step-0:  1.125rem;
+    --step-1:  1.25rem;
+    --step-2:  1.5rem;
+    --step-3:  2rem;
+    --step-4:  2.75rem;
+
+    --sans: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink:      #e7edf1;
+      --ink-2:    #aab8c2;
+      --ink-3:    #7b8b97;
+      --paper:    #0c1317;
+      --card:     #121b21;
+      --sunk:     #17222a;
+      --rule:     #24333c;
+      --rule-2:   #34464f;
+      --deep:     #74c4d9;
+      --deep-soft:#13323b;
+      --alert:    #f2933f;
+      --alert-soft:#33210f;
+      --red:      #ef8d82;
+      --amber:    #dfa845;
+      --green:    #55c096;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ink:      #e7edf1;
+    --ink-2:    #aab8c2;
+    --ink-3:    #7b8b97;
+    --paper:    #0c1317;
+    --card:     #121b21;
+    --sunk:     #17222a;
+    --rule:     #24333c;
+    --rule-2:   #34464f;
+    --deep:     #74c4d9;
+    --deep-soft:#13323b;
+    --alert:    #f2933f;
+    --alert-soft:#33210f;
+    --red:      #ef8d82;
+    --amber:    #dfa845;
+    --green:    #55c096;
+  }
+
+  /* ---------- base ---------- */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--deep); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--alert); outline-offset: 3px; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  code { background: var(--sunk); padding: 0.1em 0.35em; border-radius: 3px; }
+
+  /* ---------- shell ---------- */
+  .shell {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3rem;
+  }
+  @media (min-width: 62rem) {
+    .shell {
+      grid-template-columns: 14rem minmax(0, var(--measure));
+      justify-content: center;
+      gap: 4.5rem;
+      align-items: start;
+    }
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--rule);
+    padding: 3.5rem 0 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+  .masthead__kicker {
+    font-family: var(--sans);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--alert);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .masthead__kicker::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+  .masthead__title {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: var(--step-4);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .masthead__standfirst {
+    font-size: var(--step-1);
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: var(--prose);
+  }
+  .masthead__meta {
+    font-family: var(--sans);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+  }
+
+  /* ---------- contents rail ---------- */
+  .rail { font-family: var(--sans); font-size: var(--step--1); }
+  @media (min-width: 62rem) {
+    .rail { position: sticky; top: 2rem; max-height: calc(100vh - 4rem); overflow-y: auto; }
+  }
+  .rail__title {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 0.9rem;
+  }
+  .rail__list { list-style: none; margin: 0 0 1.75rem; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+  .rail__part {
+    font-weight: 600;
+    color: var(--ink);
+    border-top: 1px solid var(--rule);
+    padding-top: 0.7rem;
+    margin-top: 0.4rem;
+  }
+  .rail__list a { color: var(--ink-2); text-decoration: none; display: block; line-height: 1.35; }
+  .rail__list a:hover { color: var(--alert); }
+
+  /* ---------- sections ---------- */
+  .body { display: flex; flex-direction: column; gap: 3.25rem; min-width: 0; }
+  .section { display: flex; flex-direction: column; gap: 1.1rem; scroll-margin-top: 2rem; }
+  .section > * { margin: 0; }
+
+  .eyebrow {
+    font-family: var(--sans);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .h2 {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: var(--step-3);
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  .h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: var(--step-1);
+    line-height: 1.25;
+    margin-top: 0.75rem;
+    text-wrap: balance;
+  }
+  .lede { font-size: var(--step-1); line-height: 1.55; color: var(--ink-2); max-width: var(--prose); }
+
+  .section p { max-width: var(--prose); }
+  .section ul, .section ol { max-width: var(--prose); padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .section li { padding-left: 0.15rem; }
+
+  .part-break {
+    border-top: 2px solid var(--ink);
+    padding-top: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .part-break__num {
+    font-family: var(--sans);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--alert);
+  }
+  .part-break__title {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: var(--step-2);
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .part-break__note { color: var(--ink-3); font-size: var(--step--1); font-family: var(--sans); margin: 0; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--rule-2);
+    background: var(--card);
+    padding: 1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .note__label {
+    font-family: var(--sans);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .note p { margin: 0; font-size: var(--step--1); line-height: 1.6; max-width: var(--prose); }
+  .note--plain { border-left-color: var(--deep); background: var(--deep-soft); }
+  .note--plain .note__label { color: var(--deep); }
+  .note--gate { border-left-color: var(--alert); background: var(--alert-soft); }
+  .note--gate .note__label { color: var(--alert); }
+
+  /* ---------- pipeline ---------- */
+  .pipeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .stage {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+    gap: 0 1rem;
+    padding: 0.9rem 0;
+    border-top: 1px solid var(--rule);
+  }
+  .stage:last-child { border-bottom: 1px solid var(--rule); }
+  .stage__num {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+    padding-top: 0.2rem;
+  }
+  .stage__name {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: var(--step-0);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .stage__how {
+    font-family: var(--sans);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+  }
+  .stage__how--code { color: var(--deep); }
+  .stage__how--llm { color: var(--amber); }
+  .stage__how--human { color: var(--alert); }
+  .stage__desc { font-size: var(--step--1); line-height: 1.6; color: var(--ink-2); margin: 0.25rem 0 0; max-width: var(--prose); }
+
+  /* the gate is the thesis of the project, so it gets the only hard break in the sequence */
+  .stage--gate {
+    border-top: 2px dashed var(--alert);
+    border-bottom: 2px dashed var(--alert);
+    background: var(--alert-soft);
+    padding: 1.1rem 0.85rem;
+    margin: 0.35rem 0;
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+  }
+  .stage--gate + .stage { border-top: none; }
+  .stage__halt {
+    font-family: var(--sans);
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--alert);
+    grid-column: 2;
+    margin: 0.5rem 0 0;
+  }
+
+  /* ---------- tables ---------- */
+  .scroller { overflow-x: auto; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--sans);
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+  }
+  th, td { text-align: left; padding: 0.6rem 0.85rem 0.6rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-bottom: 1px solid var(--rule-2);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; padding-right: 0; }
+  .verdict { font-weight: 600; white-space: nowrap; }
+  .verdict--pass { color: var(--green); }
+  .verdict--fail { color: var(--red); }
+
+  /* ---------- run log ---------- */
+  .run {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.75;
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+  }
+  .run__line { display: block; white-space: pre; color: var(--ink-2); }
+  .run__stage { color: var(--ink); font-weight: 500; }
+  .run__ok { color: var(--green); }
+  .run__warn { color: var(--amber); }
+  .run__gate { color: var(--alert); font-weight: 500; }
+
+  /* ---------- q&a ---------- */
+  .qa { display: flex; flex-direction: column; gap: 0; }
+  .qa__item { border-top: 1px solid var(--rule); padding: 1.1rem 0; }
+  .qa__item:last-child { border-bottom: 1px solid var(--rule); }
+  .qa__q {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: var(--step-0);
+    margin: 0 0 0.45rem;
+    text-wrap: balance;
+  }
+  .qa__a { margin: 0; font-size: var(--step--1); line-height: 1.65; color: var(--ink-2); max-width: var(--prose); }
+
+  /* ---------- glossary ---------- */
+  .glossary { margin: 0; display: grid; grid-template-columns: 1fr; gap: 0.85rem; }
+  @media (min-width: 34rem) { .glossary { grid-template-columns: 9rem minmax(0, 1fr); gap: 0.85rem 1.5rem; } }
+  .glossary dt { font-family: var(--sans); font-weight: 600; font-size: var(--step--1); }
+  .glossary dd { margin: 0; font-size: var(--step--1); line-height: 1.6; color: var(--ink-2); }
+
+  /* ---------- misc ---------- */
+  .pull {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: var(--step-2);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    border-top: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    padding: 1.25rem 0;
+    margin: 0.5rem 0;
+    text-wrap: balance;
+  }
+  .cmd {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.8;
+    padding: 0.9rem 1.1rem;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--ink-2);
+  }
+  .cmd b { color: var(--ink); font-weight: 500; }
+  .footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 1.5rem;
+    font-family: var(--sans);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+  html { scroll-behavior: smooth; }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="masthead__kicker">Project documentation</p>
+    <h1 class="masthead__title">Flood Response Coordinator</h1>
+    <p class="masthead__standfirst">A multi-agent system that turns live flood-disaster data into a
+      drafted resource recommendation — and then stops, because a human decides.</p>
+    <p class="masthead__meta">
+      <span>Written to be read two ways: plain language first, then the engineering underneath.</span>
+    </p>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <p class="rail__title">Contents</p>
+
+    <ul class="rail__list">
+      <li class="rail__part">Part one · In plain language</li>
+      <li><a href="#one-sentence">The one-sentence version</a></li>
+      <li><a href="#problem">The problem it solves</a></li>
+      <li><a href="#walkthrough">A real run, start to finish</a></li>
+      <li><a href="#two-rules">The two rules that define it</a></li>
+      <li><a href="#not-do">What it deliberately doesn't do</a></li>
+    </ul>
+
+    <ul class="rail__list">
+      <li class="rail__part">Part two · How it works</li>
+      <li><a href="#pipeline">The pipeline, stage by stage</a></li>
+      <li><a href="#where-ai">Where the AI is — and isn't</a></li>
+      <li><a href="#guardrail">The guardrail</a></li>
+      <li><a href="#gate">The gate, and resumable runs</a></li>
+      <li><a href="#sources">The four data sources</a></li>
+      <li><a href="#quirks">What live data taught us</a></li>
+      <li><a href="#stack">The stack, and why</a></li>
+      <li><a href="#running">Running it</a></li>
+      <li><a href="#testing">How it's tested</a></li>
+      <li><a href="#limits">Status and honest limits</a></li>
+    </ul>
+
+    <ul class="rail__list">
+      <li class="rail__part">Part three · Explaining it</li>
+      <li><a href="#pitch">The 60-second pitch</a></li>
+      <li><a href="#demo">A five-minute demo</a></li>
+      <li><a href="#questions">Questions you'll get</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ul>
+  </nav>
+
+  <main class="body">
+
+    <div class="part-break">
+      <p class="part-break__num">Part one</p>
+      <h2 class="part-break__title">In plain language</h2>
+      <p class="part-break__note">No technical background needed. Safe to read aloud to anyone.</p>
+    </div>
+
+    <section class="section" id="one-sentence">
+      <p class="eyebrow">The short answer</p>
+      <h2 class="h2">The one-sentence version</h2>
+      <p class="lede">It watches for floods happening right now, works out how many people are inside
+        the flood zone, drafts a prioritised list of what relief teams should do — and then hands that
+        draft to a human, who approves, edits, or rejects it.</p>
+      <p>The draft is never acted on automatically. Nothing in the system dispatches supplies, sends a
+        message, or moves a resource. Approving a recommendation <em>records a decision</em>, and that
+        is all it does.</p>
+    </section>
+
+    <section class="section" id="problem">
+      <p class="eyebrow">Motivation</p>
+      <h2 class="h2">The problem it solves</h2>
+      <p>Disaster-response coordination is still largely manual. When a flood is unfolding, a
+        coordinator has a satellite-imagery site open in one tab, a global alert feed in another, a
+        population-density map in a third, and a spreadsheet in a fourth. They cross-reference by eye,
+        under time pressure, and make a judgment call.</p>
+      <p>The data-gathering part of that is tedious and mechanical — a computer should do it. The
+        judgment call is consequential and contested — a person should make it. This project splits
+        the work along exactly that line: <strong>automate the tedious ninety percent, and put the
+        consequential ten percent behind a human approval gate.</strong></p>
+      <p>That split is the whole point. It is also the same tension real humanitarian-technology teams
+        wrestle with, which is why the system is built to make the gate impossible to skip rather than
+        merely discouraged.</p>
+    </section>
+
+    <section class="section" id="walkthrough">
+      <p class="eyebrow">Worked example</p>
+      <h2 class="h2">A real run, start to finish</h2>
+      <p>This is an actual run against live data — an Orange-level flood alert in China, taken with
+        the settings the system ships with: a five-day lookback, capped at the ten most urgent events.
+        It took a few seconds. Read it as the story of what the system does.</p>
+
+      <div class="run" role="img" aria-label="Trace of a real run: seven stages, ending in an approved and logged decision.">
+<span class="run__line"><span class="run__stage">ALERT MONITOR</span></span>
+<span class="run__line">  Queried GDACS for flood events, last 5 days, [Orange, Red]</span>
+<span class="run__line">  Found 1 event above threshold</span>
+<span class="run__line">  Selected event 1104081 (China, <span class="run__warn">Orange</span>)</span>
+<span class="run__line"> </span>
+<span class="run__line"><span class="run__stage">IMAGERY</span></span>
+<span class="run__line">  Affected-area polygon -&gt; bbox 97.35, 26.05 -&gt; 108.54, 34.31 (45.76 deg&sup2;)</span>
+<span class="run__line">  CMR-STAC: 10 granules of MCDWD_L3_F3_NRT_6.1 (28 matched)</span>
+<span class="run__line">  Map layer MODIS_Combined_Flood_3-Day @ 2026-08-19</span>
+<span class="run__line"> </span>
+<span class="run__line"><span class="run__stage">POPULATION</span></span>
+<span class="run__line">  79,946,082 people inside the flood polygon</span>
+<span class="run__line">  (658,855 pixels summed, 49 no-data skipped, WorldPop 2020 1 km)</span>
+<span class="run__line"> </span>
+<span class="run__line"><span class="run__stage">ALLOCATION</span></span>
+<span class="run__line">  Drafted 3 recommended actions from 4 candidate claims</span>
+<span class="run__line"> </span>
+<span class="run__line"><span class="run__stage">FACT-CHECK</span></span>
+<span class="run__line">  <span class="run__ok">Verified 4/4 claims against 5 tool calls</span></span>
+<span class="run__line"> </span>
+<span class="run__line"><span class="run__gate">HUMAN GATE    *** RUN PAUSED — waiting for a person ***</span></span>
+<span class="run__line">  <span class="run__gate">Human approved by responder</span></span>
+<span class="run__line"> </span>
+<span class="run__line"><span class="run__stage">ACTION LOG</span></span>
+<span class="run__line">  Logged outcome: approved &middot; 3 actions</span>
+      </div>
+
+      <p>Three things in that log are worth pointing at, because they are the design showing through:</p>
+      <ul>
+        <li><strong>"Found 1 event" is a real answer, not a thin one.</strong> Two filters produce it,
+          both deliberate. The five-day window is short because GDACS keeps events listed for weeks after
+          their window closes, so a wide lookback buries what is happening now. And the default alert
+          levels are Red and Orange — GDACS rated 28 of the 29 floods active in this window Green, meaning
+          minor or localized. The reviewer can toggle Green on; the system does not pad the list to look
+          busier than the data is.</li>
+        <li><strong>Every number carries its own receipt.</strong> "79,946,082 people" is not a figure
+          the system asserts; it is the sum of 658,855 population-raster pixels inside the actual flood
+          polygon, and the recommendation cites the exact data call — one of five logged in this run —
+          that produced it.</li>
+        <li><strong>The run genuinely stopped.</strong> Not "waited politely" — the process suspended and
+          saved itself to a database. Had the server been restarted at that moment, the pending decision
+          would still have been there afterwards.</li>
+      </ul>
+      <div class="note">
+        <p class="note__label">What a failure looks like</p>
+        <p>This run found imagery. When it doesn't — NASA's near-real-time archive is only days deep, so
+          a query for an older event legitimately returns nothing — the trace records
+          <span class="mono">! No granules in the near-real-time window</span> and falls back to a
+          documented map-tile layer. It does not invent an image or quietly substitute a different date,
+          and the gap becomes a caveat on the recommendation.</p>
+      </div>
+    </section>
+
+    <section class="section" id="two-rules">
+      <p class="eyebrow">The core idea</p>
+      <h2 class="h2">The two rules that define it</h2>
+
+      <h3 class="h3">1. A human always decides</h3>
+      <p>The system drafts; it never acts. The pipeline reaches a point where it physically cannot
+        continue on its own, and it waits there. A person then does one of three things — approve the
+        draft as written, edit the actions and approve their version, or reject it — and whichever they
+        choose is written to a log alongside who they were, when, and why.</p>
+
+      <div class="note note--gate">
+        <p class="note__label">Worth saying out loud</p>
+        <p>Approval records a decision. It does not dispatch anything. The output of this system is a
+          reviewed document that a human then hands to whoever actually moves resources.</p>
+      </div>
+
+      <h3 class="h3">2. Every number must be traceable, or it doesn't ship</h3>
+      <p>The known failure of language models in this setting is that they produce a confident,
+        plausible, completely invented number. In disaster response, a figure that is off by a factor
+        of two mis-sizes a relief operation.</p>
+      <p>So the system does not <em>ask</em> the model to be accurate. Between the drafting stage and
+        the human, there is a checking stage — ordinary code, no AI — that goes through every number in
+        the draft and asks: which data call produced this? Did that call succeed? Does this number
+        actually appear in its result? Any number that fails is stripped out. If the number was
+        load-bearing, the whole draft is blocked and never reaches a person at all.</p>
+
+      <p class="pull">A recommendation with a hole in it is worse than no recommendation.</p>
+
+      <div class="note note--plain">
+        <p class="note__label">In plain terms</p>
+        <p>Think of a newsroom fact-checker who cannot be talked round. The writer submits a story; the
+          checker holds every figure against the source documents and deletes anything unsupported. The
+          checker is not smarter than the writer — it just isn't guessing.</p>
+      </div>
+    </section>
+
+    <section class="section" id="not-do">
+      <p class="eyebrow">Scope</p>
+      <h2 class="h2">What it deliberately doesn't do</h2>
+      <p>Being clear about the boundary is part of explaining the project honestly:</p>
+      <ul>
+        <li><strong>It doesn't dispatch, order, or send anything.</strong> There is no integration with
+          a logistics system, and that is a design decision rather than an unfinished feature.</li>
+        <li><strong>It doesn't estimate around missing data.</strong> If a population raster is
+          unavailable, no population figure is produced — not an approximation, not last year's number.
+          The gap is reported with its reason.</li>
+        <li><strong>It doesn't forecast.</strong> It describes floods that alert agencies say are
+          happening now; it does not predict where one will happen next.</li>
+        <li><strong>It doesn't replace local knowledge.</strong> A satellite footprint and a population
+          raster say nothing about which road is passable or which warehouse is stocked. That is
+          precisely the knowledge the human at the gate brings.</li>
+      </ul>
+    </section>
+
+    <div class="part-break">
+      <p class="part-break__num">Part two</p>
+      <h2 class="part-break__title">How it works</h2>
+      <p class="part-break__note">The engineering, and the reasoning behind each choice.</p>
+    </div>
+
+    <section class="section" id="pipeline">
+      <p class="eyebrow">Architecture</p>
+      <h2 class="h2">The pipeline, stage by stage</h2>
+      <p>Seven stages, run as a state machine (LangGraph). Each stage receives the accumulated state,
+        does one job, and appends to a shared trace that the dashboard streams live. The tag on each
+        stage says what actually performs the work.</p>
+
+      <ol class="pipeline">
+        <li class="stage">
+          <span class="stage__num">01</span>
+          <div>
+            <p class="stage__name">Alert Monitor <span class="stage__how stage__how--code">code</span><span class="stage__how stage__how--llm">llm tie-break</span></p>
+            <p class="stage__desc">Lists active GDACS flood events above an alert threshold — by
+              default the last five days at the alert levels the reviewer has selected, capped at the
+              ten most urgent. The cap is applied
+              <em>after</em> ranking by alert level and recency, so it cuts the tail rather than
+              dropping a Red event that GDACS happened to list late, and a truncated list reports how
+              many matched. If several events are active, the model picks which is most urgent and says
+              why — but its pick is validated against the candidate list, and the deterministic ranking
+              is both the fallback and the check.</p>
+          </div>
+        </li>
+        <li class="stage">
+          <span class="stage__num">02</span>
+          <div>
+            <p class="stage__name">Imagery Retrieval <span class="stage__how stage__how--code">code</span></p>
+            <p class="stage__desc">Resolves the real affected-area polygon, derives its bounding box and
+              area, searches NASA CMR-STAC for flood granules covering it, and builds a NASA GIBS tile
+              layer for the map. The tile layer needs no network call, which is why it can back up the
+              granule search when that comes back empty.</p>
+          </div>
+        </li>
+        <li class="stage">
+          <span class="stage__num">03</span>
+          <div>
+            <p class="stage__name">Population Overlay <span class="stage__how stage__how--code">code</span></p>
+            <p class="stage__desc">Sums WorldPop UN-adjusted population raster values inside the flood
+              polygon — not inside the bounding box, and not a country total scaled down. Reports which
+              countries were covered and which rasters were missing.</p>
+          </div>
+        </li>
+        <li class="stage">
+          <span class="stage__num">04</span>
+          <div>
+            <p class="stage__name">Allocation Draft <span class="stage__how stage__how--llm">llm judgment</span></p>
+            <p class="stage__desc">Writes the headline, situation summary, prioritised actions, and
+              caveats. It may only cite claim ids built from tool results it was actually given, and
+              each action records which claims support it.</p>
+          </div>
+        </li>
+        <li class="stage">
+          <span class="stage__num">05</span>
+          <div>
+            <p class="stage__name">Fact-Check <span class="stage__how stage__how--code">deterministic code</span></p>
+            <p class="stage__desc">Verifies every claim against the tool-call log, strips what it cannot
+              verify, and blocks the draft entirely if a load-bearing figure fails. Never a prompt —
+              see below.</p>
+          </div>
+        </li>
+        <li class="stage">
+          <span class="stage__num">06</span>
+          <div>
+            <p class="stage__name">Supervisor <span class="stage__how stage__how--code">code</span></p>
+            <p class="stage__desc">Only runs when the fact-check blocked the draft. It names the
+              rejected claims and their verbatim reasons, lists the only claim ids that may be cited,
+              and sends it back to be redrafted. It stops on a spent attempt budget or on
+              <em>stagnation</em> — a redraft rejected for the same claims as the attempt before it —
+              so the loop cannot spin. A draft that never passes still never reaches a human.</p>
+          </div>
+        </li>
+        <li class="stage stage--gate">
+          <span class="stage__num">07</span>
+          <div>
+            <p class="stage__name">Human Gate <span class="stage__how stage__how--human">a person</span></p>
+            <p class="stage__desc">Calls LangGraph's <code>interrupt()</code>. The graph suspends, the
+              state is written to the checkpoint database, and nothing continues until someone resumes
+              the run with a decision: approve, edit, or reject.</p>
+            <p class="stage__halt">The run stops here. This is not a pause — the process is gone.</p>
+          </div>
+        </li>
+        <li class="stage">
+          <span class="stage__num">08</span>
+          <div>
+            <p class="stage__name">Action Log <span class="stage__how stage__how--code">code</span></p>
+            <p class="stage__desc">Records the outcome — decision, reviewer, timestamp, notes, and the
+              final action list including any edits. A draft blocked at stage five arrives here directly,
+              so a blocked run is logged as such rather than vanishing.</p>
+          </div>
+        </li>
+      </ol>
+
+      <p>Three of the routes between stages are conditional, and all of them fail toward telling the
+        truth: if the Alert Monitor finds no event, the run skips to the log rather than fabricating
+        one; if the Fact-Check fails, the run goes to the supervisor rather than to the human; and if
+        the supervisor gives up, it goes to the log — never to the gate.</p>
+
+      <div class="note">
+        <p class="note__label">Where this came from</p>
+        <p>The supervisor is adapted from the supervisor component of NVIDIA's
+          <a href="https://arxiv.org/abs/2603.24517">AVO architecture</a>, which pairs an agent loop
+          with a monitor that watches for "stagnation or repeated unproductive cycles" and redirects.
+          Only that one component was adopted, and only here, because this is the single place in the
+          pipeline with a real fitness signal to iterate against: the Fact-Check is a deterministic
+          pass/fail oracle. The data-gathering stages keep their fixed call sequence — there is no
+          search problem there to explore, so an exploratory loop would add latency and a fabrication
+          surface for nothing.</p>
+      </div>
+    </section>
+
+    <section class="section" id="where-ai">
+      <p class="eyebrow">Design decision</p>
+      <h2 class="h2">Where the AI is — and where it deliberately isn't</h2>
+      <p>Only two of the seven stages use a language model, and that is the interesting part of the
+        design. Extent, then population, then imagery is a fixed, correct sequence of calls. Handing
+        that to a model would add latency, add cost, and add a surface where coordinates can be
+        fabricated — in exchange for nothing, because there is no judgment in "call the next obvious
+        tool".</p>
+      <p>The model is reserved for the two places that genuinely require judgment: choosing which of
+        several active emergencies is most urgent, and writing a prioritised recommendation from
+        evidence. Verification is deliberately excluded from that list.</p>
+
+      <div class="note">
+        <p class="note__label">Geometry never crosses the model boundary</p>
+        <p>A GDACS affected-area polygon is about 880 KB of coordinates. Passing it through a model
+          would swamp the context window and invite it to truncate or invent coordinates. So tools are
+          addressed by event id, and geometry is resolved server-side: the model names an event, but
+          never handles spatial data. The polygon also never enters the checkpoint or the browser
+          stream.</p>
+      </div>
+
+      <h3 class="h3">Three interchangeable engines</h3>
+      <p>The same interface serves Anthropic directly, OpenRouter as a gateway to other models, and a
+        rule-based path with no model at all.</p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th scope="col">Engine</th><th scope="col">Configured by</th><th scope="col">Recorded as</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Anthropic, direct</td><td><span class="mono">ANTHROPIC_API_KEY</span></td><td><span class="mono">claude-opus-5</span></td></tr>
+            <tr><td>OpenRouter gateway</td><td><span class="mono">OPENROUTER_API_KEY</span></td><td><span class="mono">openrouter:&hellip;</span></td></tr>
+            <tr><td>Rule-based</td><td>nothing at all</td><td><span class="mono">rule-based</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The rule-based path is load-bearing, not a stub: it produces the same structured objects from
+        the same tool results, so the entire pipeline — fact-check and approval gate included — runs and
+        is testable with no credentials. Every recommendation records which engine drafted it, and the
+        dashboard shows that. When the gateway is in use, the engine is read from the response rather
+        than from the request, because OpenRouter may route to a different upstream than the one asked
+        for — and in a system built on traceability, "which model wrote this" should not be a guess.</p>
+    </section>
+
+    <section class="section" id="guardrail">
+      <p class="eyebrow">The important part</p>
+      <h2 class="h2">The guardrail</h2>
+      <p>If someone only has time to look at one file, it should be
+        <span class="mono">backend/app/agents/factcheck.py</span>. Three rules, enforced rather than
+        requested:</p>
+      <ol>
+        <li>A numeric claim must cite a tool call <strong>from the current run</strong>.</li>
+        <li>That call must have <strong>succeeded</strong>.</li>
+        <li>The number must <strong>actually appear</strong> in that call's result.</li>
+      </ol>
+      <p>And a fourth, following from the others: a source that was unavailable cannot be claimed about
+        at all. If the population lookup failed, no population figure may be asserted — the
+        recommendation states that the data is missing.</p>
+
+      <div class="note">
+        <p class="note__label">Why this is code and not a prompt</p>
+        <p>Asking a language model to verify another model's numbers reintroduces the exact failure the
+          check exists to catch: a confident, plausible, unsourced figure. Verification here is lookup
+          and arithmetic, and it is tested adversarially.</p>
+      </div>
+
+      <p>The test suite attacks it with the shapes a plausible-sounding fabrication actually takes:</p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th scope="col">Claim presented to the checker</th><th scope="col">Verdict</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>2,063,552 people, citing the real population call</td><td class="verdict verdict--pass">accepted</td></tr>
+            <tr><td>~2.06M people — rounded, within 0.5% of the real figure</td><td class="verdict verdict--pass">accepted</td></tr>
+            <tr><td>4,500,000 people, citing a <em>real</em> call that never produced that number</td><td class="verdict verdict--fail">rejected</td></tr>
+            <tr><td>A number with no citation at all</td><td class="verdict verdict--fail">rejected</td></tr>
+            <tr><td>A number citing a call that doesn't exist</td><td class="verdict verdict--fail">rejected</td></tr>
+            <tr><td>A number citing a call that failed</td><td class="verdict verdict--fail">rejected</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The third row is the one that matters. Citing a genuine data call that simply never contained
+        the quoted figure is the failure mode a human reviewer is least likely to catch by eye, and the
+        one a model-based checker would most likely wave through.</p>
+    </section>
+
+    <section class="section" id="gate">
+      <p class="eyebrow">Human-in-the-loop</p>
+      <h2 class="h2">The gate, and why runs survive a restart</h2>
+      <p>The gate is a real suspension, not a loop that waits. LangGraph's <code>interrupt()</code>
+        stops execution and hands the pending payload to whoever is driving the graph; the state is
+        persisted by a checkpointer — SQLite locally, Postgres in the containerised stack.</p>
+      <p>The consequence is the feature: because the paused run lives in a database rather than in a
+        process, a reviewer can close the tab, come back later, and still find the decision waiting.
+        This was verified by restarting the backend container mid-approval and then approving the
+        recovered run.</p>
+      <p>It also shapes the API, which is deliberately two endpoints rather than one long-lived
+        connection:</p>
+      <div class="cmd"><b>GET</b>  /api/runs/{id}/stream     streams the trace until the graph interrupts
+<b>POST</b> /api/runs/{id}/decision   resumes the run with a human decision</div>
+      <p>Because the run is in the checkpoint, the stream can drop and the browser can close without
+        losing the pending approval. Reconnecting replays the state instead of re-running the graph.</p>
+      <p>At the gate the reviewer can edit the actions, and editing is per-action by design: each action
+        carries its own rationale and its own supporting citations through the edit, so rewording or
+        removing one action cannot silently re-attribute another action's evidence.</p>
+    </section>
+
+    <section class="section" id="sources">
+      <p class="eyebrow">Data</p>
+      <h2 class="h2">The four data sources</h2>
+      <p>All live, all free, and none requiring a key for what this system does.</p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th scope="col">Source</th><th scope="col">Provides</th><th scope="col">Auth</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>GDACS</strong><br><span class="mono">UN + EU JRC</span></td>
+              <td>Active flood events, alert levels, affected-area polygons</td>
+              <td>none</td>
+            </tr>
+            <tr>
+              <td><strong>NASA CMR-STAC</strong><br><span class="mono">LANCEMODIS</span></td>
+              <td>MODIS/VIIRS flood-product granule references</td>
+              <td>only to <em>download</em></td>
+            </tr>
+            <tr>
+              <td><strong>NASA GIBS</strong></td>
+              <td>Pre-rendered flood imagery tiles, 2021 to present — what the map draws</td>
+              <td>none</td>
+            </tr>
+            <tr>
+              <td><strong>WorldPop</strong></td>
+              <td>1 km UN-adjusted population rasters, summed locally</td>
+              <td>none</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Every value the data layer returns carries a provenance record: source, the exact request URL,
+        a UTC fetch timestamp, and cache age. That was built in from the start rather than retrofitted,
+        because the Fact-Check stage can only enforce traceability if the layer beneath it emits the
+        receipts.</p>
+    </section>
+
+    <section class="section" id="quirks">
+      <p class="eyebrow">Field notes</p>
+      <h2 class="h2">What the live data taught us</h2>
+      <p>The data layer was built first and without any model involved — API quirks are far cheaper to
+        debug that way, and every agent above inherits whatever the data layer gets wrong. Each finding
+        below was discovered by probing the real APIs, is handled in code, and is pinned by a test so a
+        regression to the naive version cannot pass.</p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th scope="col">Trap</th><th scope="col">Why it matters</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>WorldPop has two products; only the <strong>UN-adjusted</strong> one is correct here</td>
+              <td>The unconstrained product overstates by a country-dependent margin — 38% for Nepal, 5% for Pakistan — enough to badly mis-scale a relief estimate</td>
+            </tr>
+            <tr>
+              <td>Population is a <strong>sum</strong>, not a mean</td>
+              <td>Pixels hold people-per-pixel, so averaging understates a flood zone by orders of magnitude. No-data is <span class="mono">-99999.0</span>; a naive sum over Nepal returns <span class="mono">-2.8e10</span></td>
+            </tr>
+            <tr>
+              <td>The GDACS event-list bounding box is a <strong>zero-area centroid</strong></td>
+              <td>Using it would compute population over a point. Real extents come from the geometry endpoint's affected-area polygon, so the event model deliberately exposes no bbox at all</td>
+            </tr>
+            <tr>
+              <td>Select by property, never by position</td>
+              <td>GDACS returns the centroid and a much larger global polygon alongside the affected-area one, in undocumented order; CMR-STAC asset keys are production timestamps, so data assets are matched on file extension</td>
+            </tr>
+            <tr>
+              <td>NASA's near-real-time archive is only days deep</td>
+              <td>Historical queries returning zero granules is <em>correct</em>, not a bug — so it is reported as unavailable and never backfilled from another date. GIBS tiles are the historical path</td>
+            </tr>
+            <tr>
+              <td>Two upstream defects worked around</td>
+              <td>WorldPop's async statistics API never completes and leaks PHP warnings into its JSON; and the first file in a WorldPop record is not always a raster — Pakistan's is a zip archive</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>This table is the most persuasive part of the project to walk someone through, because none of
+        it is guessable from documentation. It is what "verified against live APIs" actually means.</p>
+    </section>
+
+    <section class="section" id="stack">
+      <p class="eyebrow">Implementation</p>
+      <h2 class="h2">The stack, and why each piece</h2>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th scope="col">Layer</th><th scope="col">Choice</th><th scope="col">Reason</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Orchestration</td><td>LangGraph</td><td>Its <span class="mono">interrupt()</span> plus checkpointing is exactly the human-in-the-loop primitive this needs; the gate isn't bolted on</td></tr>
+            <tr><td>API</td><td>FastAPI + SSE</td><td>The trace must stream as it happens. The graph is synchronous and genuinely blocking, so each run executes on a worker thread and pushes onto a queue the response drains</td></tr>
+            <tr><td>Checkpoints</td><td>SQLite / Postgres</td><td>SQLite locally, Postgres under Compose. A paused run must outlive the process</td></tr>
+            <tr><td>Tool surface</td><td>One registry, two adapters</td><td>Five tools defined once, exposed over MCP for external clients and bound directly by the agents — no duplicated logic, no network hop in-process</td></tr>
+            <tr><td>Geospatial</td><td>rasterio, shapely</td><td>Population is summed from the raster locally; the polygon never leaves the server</td></tr>
+            <tr><td>Frontend</td><td>Next.js 16, React 19, Tailwind v4</td><td>Standard, and the dashboard is a single operational console rather than a multi-page app</td></tr>
+            <tr><td>Map</td><td>Leaflet, not MapLibre GL</td><td>Everything this map needs is raster — a basemap, a tile overlay, one rectangle — so the WebGL vector pipeline buys nothing. MapLibre 5 and 6 both failed to initialise their style here despite WebGL2 and tile hosts being confirmed working</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h3">Where the code lives</h3>
+      <div class="cmd">backend/app/
+  <b>sources/</b>      GDACS, CMR-STAC/GIBS, WorldPop clients — no LLM anywhere
+  <b>tools.py</b>      one registry of the five capabilities
+  <b>mcp_server.py</b> MCP adapter over that same registry
+  <b>agents/</b>       graph nodes, LLM providers, and factcheck.py
+  <b>api.py</b>        FastAPI, SSE streaming, the approval endpoint
+  <b>cli.py</b>        inspect any source from the terminal
+frontend/
+  <b>app/page.tsx</b>  the console: events rail | map | tabbed detail panel
+  <b>lib/workflow.ts</b> derives stage status from the live stream
+  <b>components/</b>   stepper, map, approval card, evidence and trace panels</div>
+
+      <h3 class="h3">The dashboard</h3>
+      <p>Three regions — an events rail, the map, and a tabbed detail panel — with the seven-stage
+        pipeline across the top, driven live by the stream. The panel has four tabs: <strong>Brief</strong>
+        (the recommendation, and the approve/edit/reject controls), <strong>Situation</strong> (measured
+        figures with their provenance), <strong>Evidence</strong> (every claim and the tool call behind
+        it), and <strong>Trace</strong> (the agents' reasoning, line by line).</p>
+      <p>The front end holds the same line as the backend: a missing value renders as an em dash, an
+        unavailable source prints its reason, and a partial population total keeps its PARTIAL label and
+        names the raster that is missing. No panel ever invents a value to fill a space.</p>
+    </section>
+
+    <section class="section" id="running">
+      <p class="eyebrow">Operations</p>
+      <h2 class="h2">Running it</h2>
+      <p>The whole stack — Postgres, backend, dashboard — in one command:</p>
+      <div class="cmd">docker compose up --build      <b># then open http://localhost:3000</b></div>
+      <p>No key is required; without one the stack runs on the rule-based engine and every stage,
+        including the gate, still works. To use Claude, copy <span class="mono">.env.example</span> to
+        <span class="mono">.env</span> and set <span class="mono">ANTHROPIC_API_KEY</span>.</p>
+
+      <p>Or locally, without Docker — Python 3.12+ with uv, and Node 20+:</p>
+      <div class="cmd"><b># terminal one</b>
+cd backend
+uv sync --extra dev
+uv run uvicorn app.api:app --port 8088 --reload
+
+<b># terminal two</b>
+cd frontend
+npm install
+npm run dev</div>
+
+      <p>There is also no-UI access, which is often the fastest way to show someone the data layer:</p>
+      <div class="cmd">uv run python -m app.cli events --days 45           <b># live GDACS events</b>
+uv run python -m app.cli report --event-id 1103933  <b># all sources + a provenance row per number</b>
+uv run python -m app.cli cache                      <b># what's cached, by source</b></div>
+      <p>And the same five tools are served over MCP — <span class="mono">python -m app.mcp_server</span>
+        over stdio, or <span class="mono">--http</span> — so any MCP client can call them directly.</p>
+    </section>
+
+    <section class="section" id="testing">
+      <p class="eyebrow">Confidence</p>
+      <h2 class="h2">How it's tested</h2>
+      <div class="cmd">uv run pytest            <b># 128 offline tests, no network</b>
+uv run pytest -m live    <b># 9 tests against the real APIs</b></div>
+      <p>The offline tests replay committed fixtures, and the fixtures are deliberately hostile —
+        adversarial feature ordering, a zip archive listed before the raster, dynamic asset keys — so a
+        regression to a naive implementation cannot pass them.</p>
+      <p>The nine live tests are the early-warning system for upstream API changes. Two of them are
+        documentary: they will fail if GDACS or NASA <em>improve</em> their behaviour, which is the
+        signal that a workaround can be deleted.</p>
+    </section>
+
+    <section class="section" id="limits">
+      <p class="eyebrow">Status</p>
+      <h2 class="h2">Where it stands, and honest limits</h2>
+      <p>Six phases are built and verified against live APIs: the data layer, the MCP tool surface, the
+        agent graph, human-in-the-loop with checkpointing, the streaming console, and Docker Compose
+        orchestration with Postgres.</p>
+      <p>Verified end to end in a real browser: pick an event, watch the trace stream, reach the gate,
+        approve, and get the logged receipt — against live GDACS data, with a clean console.</p>
+      <p>Known gaps, stated plainly:</p>
+      <ul>
+        <li><strong>Historical replay mode is not built.</strong> It is the remaining planned feature, and
+          the thing that would make demos independent of whatever is flooding today.</li>
+        <li><strong>Two paths are verified only outside a browser</strong> — editing at the gate, and a
+          draft blocked by the fact-check. Both are covered by tests against the real compiled graph;
+          neither has been clicked through in a browser. The repair loop in particular is unreachable
+          on the rule-based engine, which passes verification by construction.</li>
+        <li><strong>One server process by design.</strong> The lock that stops two clients advancing the
+          same run is process-local, so scaling out means moving that lock into Postgres first.</li>
+        <li><strong>Population is a static annual raster.</strong> A 2020 raster against a 2026 event
+          means exposure may have shifted — which is why the system emits that as a caveat on every
+          recommendation rather than leaving the reader to remember it.</li>
+      </ul>
+    </section>
+
+    <div class="part-break">
+      <p class="part-break__num">Part three</p>
+      <h2 class="part-break__title">Explaining it to someone</h2>
+      <p class="part-break__note">Scripts and answers for when you're the one doing the talking.</p>
+    </div>
+
+    <section class="section" id="pitch">
+      <p class="eyebrow">Script</p>
+      <h2 class="h2">The 60-second pitch</h2>
+      <p>Say it roughly like this. The order matters — problem, then split, then the guardrail, then the
+        honest boundary.</p>
+      <div class="note note--plain">
+        <p class="note__label">Out loud</p>
+        <p>"When a flood is happening, a response coordinator has four browser tabs open — a global alert
+          feed, satellite imagery, a population map, a spreadsheet — and they cross-reference by eye under
+          time pressure.</p>
+        <p>This system does the cross-referencing. It pulls the live alert, works out the actual flood
+          footprint, sums how many people are inside it, and drafts a prioritised list of what to do.</p>
+        <p>Then it stops. A human approves, edits, or rejects — and the run is genuinely suspended in a
+          database until they do, so they can close the tab and come back.</p>
+        <p>The part I'd point at is the checking stage. Language models produce confident invented
+          numbers, which in this domain mis-sizes a relief operation. So between the drafting and the
+          human there's a stage of ordinary code that holds every number against the data call that
+          produced it, and strips anything it can't verify. If a load-bearing number fails, the whole
+          draft is blocked and never reaches a person.</p>
+        <p>And nothing is ever dispatched. Approving records a decision — the output is a reviewed
+          document that a human hands onward."</p>
+      </div>
+    </section>
+
+    <section class="section" id="demo">
+      <p class="eyebrow">Runbook</p>
+      <h2 class="h2">A five-minute demo</h2>
+      <ol>
+        <li><strong>Start with the events rail.</strong> "These are real flood events happening now, from
+          the UN and EU joint alert system — last five days, ten most urgent." Then toggle Green on:
+          the list jumps from one event to ten of twenty-nine. "Red and Orange are rare on purpose. Most
+          active floods are Green — minor or localized — so the console defaults to the ones that warrant
+          coordinating a response." Point out that a short list is a real answer, and an empty one is too.</li>
+        <li><strong>Click one, and narrate the stepper.</strong> The seven stages light up as the run
+          advances. This is where the audience sees it is a pipeline, not a chatbot.</li>
+        <li><strong>Stop on any amber stage.</strong> If one appears — most often the imagery search
+          finding nothing in the near-real-time window — that is the best moment in the demo: "it said so
+          instead of substituting a different date. That's the whole design in one line."</li>
+        <li><strong>Land on the gate.</strong> The stepper shows the run halted and the Brief tab flags a
+          decision waiting. Say plainly: the process is suspended in a database right now.</li>
+        <li><strong>Open the Evidence tab.</strong> Show a claim, its value, and the tool-call id beside
+          it — then the tool-call log those ids point into, including any call that failed. This is the
+          traceability claim made concrete.</li>
+        <li><strong>Approve, and read the receipt.</strong> "Approved and logged — and note what it says:
+          this system does not execute response actions."</li>
+      </ol>
+      <div class="note">
+        <p class="note__label">If you want the strongest single moment</p>
+        <p>Skip ahead to the fact-check table in Part two and walk through the third row — a number that
+          cites a genuine data call which never contained it. Explaining why that one is rejected, and
+          why a model-based checker would have let it through, lands harder than any screen in the app.</p>
+      </div>
+    </section>
+
+    <section class="section" id="questions">
+      <p class="eyebrow">Anticipated</p>
+      <h2 class="h2">Questions you'll get</h2>
+
+      <div class="qa">
+        <div class="qa__item">
+          <p class="qa__q">What stops the model from just making up a number?</p>
+          <p class="qa__a">Nothing stops it from drafting one — that's the realistic assumption. What
+            stops it from reaching a person is the Fact-Check stage: deterministic code that requires
+            every number to cite a successful tool call from this run and to actually appear in that
+            call's result. Unverifiable claims are stripped; a load-bearing failure blocks the draft
+            entirely.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">Why not let the AI check its own work?</p>
+          <p class="qa__a">Because that reintroduces the exact failure being guarded against. A model
+            asked to verify a plausible-looking figure will often agree with it. The check here is lookup
+            and arithmetic, which cannot be persuaded.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">Why not use an agent for everything, end to end?</p>
+          <p class="qa__a">Three of the stages have one correct call sequence. Delegating those to a model
+            adds latency, cost, and a fabrication surface for no gain. The model is used where there is
+            real judgment — triaging competing emergencies, and writing the recommendation.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">Does it work without an API key?</p>
+          <p class="qa__a">Fully. With no credentials it runs the rule-based engine, which produces the
+            same structured objects from the same evidence, so the fact-check and the approval gate are
+            both exercised. Every recommendation records which engine drafted it, and the UI shows that.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">What happens if a data source is down?</p>
+          <p class="qa__a">It is reported as unavailable with its reason, and nothing is estimated in its
+            place. That gap becomes a caveat on the recommendation and is displayed in the console. A
+            source that failed cannot be claimed about at all.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">Is a human really required, or is it just the default?</p>
+          <p class="qa__a">Required. The graph calls <span class="mono">interrupt()</span> — execution
+            stops and the state is persisted. There is no code path from drafting to a logged approval
+            that does not pass through a submitted human decision.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">How accurate is the population figure?</p>
+          <p class="qa__a">It is a sum of WorldPop UN-adjusted 1 km pixels inside the real flood polygon —
+            so it is as accurate as that raster, and its year is stated. When a country's raster is
+            missing, the total is labelled PARTIAL and names what's missing, because a partial total
+            understates reality and must not be read as complete.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">Could this be used for other disaster types?</p>
+          <p class="qa__a">The architecture transfers directly — the pipeline shape, the traceability
+            rule, and the gate are hazard-agnostic. What is flood-specific is the source layer: GDACS
+            event types, the MODIS flood products, and the extent geometry. Adding earthquakes would mean
+            new source clients behind the same tool registry.</p>
+        </div>
+        <div class="qa__item">
+          <p class="qa__q">What was the hardest part?</p>
+          <p class="qa__a">Not the agents — the data. Every entry in the field-notes table was a wrong
+            answer that looked right: the unconstrained population product, the centroid masquerading as
+            a bounding box, averaging a raster that holds counts. Building the data layer first, with no
+            model in the loop, is what made those findable.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="glossary">
+      <p class="eyebrow">Reference</p>
+      <h2 class="h2">Glossary</h2>
+      <p>For anyone in the room who doesn't work with this vocabulary daily.</p>
+      <dl class="glossary">
+        <dt>GDACS</dt>
+        <dd>Global Disaster Alert and Coordination System — a joint UN and European Commission service that publishes live disaster alerts with severity levels (Green, Orange, Red).</dd>
+
+        <dt>Affected-area polygon</dt>
+        <dd>The actual mapped shape of the flooded region, as opposed to a single point marking roughly where it is.</dd>
+
+        <dt>Bounding box</dt>
+        <dd>The smallest rectangle containing a shape. Cheap to work with, so it's what gets passed around — but population is summed over the real polygon, not the rectangle.</dd>
+
+        <dt>Raster</dt>
+        <dd>A grid of numbers laid over the map. In a population raster each cell holds how many people live in that square kilometre — which is why the correct operation over a flood zone is addition, not averaging.</dd>
+
+        <dt>Granule</dt>
+        <dd>One individual satellite data file covering a specific place and time.</dd>
+
+        <dt>Tile layer</dt>
+        <dd>Pre-rendered map imagery cut into small squares so a browser can fetch only the ones on screen. This is what the flood overlay on the map is made of.</dd>
+
+        <dt>UN-adjusted</dt>
+        <dd>A population product rescaled so national totals match official UN figures. The unadjusted alternative can be significantly high, which is why this one is mandatory here.</dd>
+
+        <dt>Provenance</dt>
+        <dd>The record of where a value came from: which source, which exact request, and when. Attached to every number this system produces.</dd>
+
+        <dt>Tool call</dt>
+        <dd>One request the system made for data, logged with its arguments, result, and outcome. The receipts the fact-checker verifies claims against.</dd>
+
+        <dt>Checkpoint</dt>
+        <dd>A saved snapshot of a run's state in a database. It's what lets a paused run outlive the server process.</dd>
+
+        <dt>Human-in-the-loop</dt>
+        <dd>A system deliberately built so it cannot complete a consequential step without a person's decision.</dd>
+
+        <dt>SSE</dt>
+        <dd>Server-Sent Events — a one-way stream from server to browser. How the trace appears line by line as the agents work, instead of all at once at the end.</dd>
+
+        <dt>MCP</dt>
+        <dd>Model Context Protocol — a standard way to expose tools to AI clients. The same five tools this system uses internally are served over it.</dd>
+
+        <dt>LangGraph</dt>
+        <dd>The library used to run the pipeline as a state machine, and the source of the interrupt that makes the human gate a real stop.</dd>
+      </dl>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>Flood Response Coordinator &middot; documentation. Nothing in this system executes a response
+      action; approval records a decision.</p>
+  </footer>
+
+</div>

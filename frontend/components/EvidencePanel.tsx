@@ -17,16 +17,28 @@ import { EMPTY, formatClock, formatMeasure } from "@/lib/format";
 import type { Claim, ToolCallSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+const SUPERVISOR_OUTCOME: Record<string, string> = {
+  retry: "The supervisor sent the draft back to be redrafted.",
+  stagnant:
+    "The redraft failed on exactly the same claims as the attempt before it, so the supervisor stopped rather than spending the remaining attempts proving it.",
+  exhausted:
+    "The supervisor used every redraft attempt and the figures still could not be verified.",
+};
+
 export function EvidencePanel({
   verified,
   rejected,
   toolCalls,
   blockingReason,
+  draftAttempts,
+  supervisorOutcome,
 }: {
   verified: Claim[];
   rejected: Claim[];
   toolCalls: ToolCallSummary[];
   blockingReason: string | null;
+  draftAttempts: number | null;
+  supervisorOutcome: string | null;
 }) {
   if (toolCalls.length === 0 && verified.length === 0 && rejected.length === 0) {
     return (
@@ -44,6 +56,14 @@ export function EvidencePanel({
         <div className="rounded-lg bg-destructive/10 px-3 py-2.5 ring-1 ring-destructive/30">
           <p className="text-xs font-medium text-destructive">Blocked by the fact-check</p>
           <p className="mt-1 text-[11px] leading-relaxed text-destructive/90">{blockingReason}</p>
+          {supervisorOutcome && SUPERVISOR_OUTCOME[supervisorOutcome] ? (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-destructive/90">
+              {draftAttempts && draftAttempts > 1
+                ? `${draftAttempts} drafts were attempted. `
+                : ""}
+              {SUPERVISOR_OUTCOME[supervisorOutcome]}
+            </p>
+          ) : null}
           <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
             A draft whose load-bearing figure fails verification never reaches a human — a
             recommendation with a hole in it is worse than no recommendation.

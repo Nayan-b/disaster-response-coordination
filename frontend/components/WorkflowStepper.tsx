@@ -15,6 +15,7 @@ import {
   CircleDashed,
   Hand,
   Minus,
+  RefreshCw,
   Satellite,
   ScrollText,
   ShieldCheck,
@@ -33,6 +34,7 @@ const STAGE_ICON: Record<string, ReactNode> = {
   population_overlay: <Users className="size-3.5" />,
   allocation_draft: <ScrollText className="size-3.5" />,
   fact_check: <ShieldCheck className="size-3.5" />,
+  supervisor: <RefreshCw className="size-3.5" />,
   human_gate: <Hand className="size-3.5" />,
   action_log: <ScrollText className="size-3.5" />,
 };

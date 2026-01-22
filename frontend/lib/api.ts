@@ -38,9 +38,26 @@ export function fetchHealth() {
   return getJSON<Health>("/api/health");
 }
 
-export function fetchEvents(days = 45) {
-  return getJSON<{ events: FloodEvent[]; unavailable?: string; source?: string }>(
-    `/api/events?days=${days}`,
+export interface EventListResponse {
+  events: FloodEvent[];
+  /** How many matched the window before the cap — so the picker can say "10 of 23". */
+  total_matched?: number;
+  truncated?: boolean;
+  unavailable?: string;
+  source?: string;
+}
+
+/**
+ * `levels` is a comma-separated list ("Red,Orange"). It is passed as a string rather than an array so
+ * callers can use it directly as an effect dependency — an array literal would change identity on
+ * every render and refetch forever.
+ *
+ * Note the backend falls back to Orange+Red when the list resolves to empty, so the caller must not
+ * send an empty selection expecting "nothing".
+ */
+export function fetchEvents(days: number, limit: number, levels: string) {
+  return getJSON<EventListResponse>(
+    `/api/events?days=${days}&limit=${limit}&levels=${encodeURIComponent(levels)}`,
   );
 }
 
@@ -48,6 +65,8 @@ export async function startRun(body: {
   event_id?: number | null;
   episode_id?: number | null;
   lookback_days?: number;
+  /** Must match the levels the picker is showing, or a listed event won't be found by the run. */
+  alert_levels?: string[];
   reviewer?: string;
 }) {
   const response = await fetch(`${API_BASE}/api/runs`, {

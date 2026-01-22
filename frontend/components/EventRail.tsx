@@ -26,6 +26,24 @@ const ALERT_STYLE: Record<string, string> = {
 
 const ALERT_RANK: Record<string, number> = { Red: 3, Orange: 2, Green: 1 };
 
+export type AlertLevel = "Red" | "Orange" | "Green";
+
+/** Most severe first — the same order the backend ranks by. */
+export const ALERT_LEVELS: AlertLevel[] = ["Red", "Orange", "Green"];
+
+/** What each level means in GDACS's own terms, so the toggle isn't a mystery switch. */
+const LEVEL_HINT: Record<AlertLevel, string> = {
+  Red: "GDACS Red — severe, high likelihood of significant impact",
+  Orange: "GDACS Orange — moderate, may need international coordination",
+  Green: "GDACS Green — minor or localized. Most active floods sit here, so turning this on widens the list a lot",
+};
+
+const LEVEL_ON: Record<AlertLevel, string> = {
+  Red: "bg-red-600 text-white ring-red-600",
+  Orange: "bg-orange-500 text-orange-950 ring-orange-500",
+  Green: "bg-emerald-600 text-white ring-emerald-600",
+};
+
 export function AlertPill({ level, className }: { level: string | null; className?: string }) {
   return (
     <Badge
@@ -47,6 +65,9 @@ export function EventRail({
   selectedId,
   running,
   lookbackDays,
+  totalMatched,
+  levels,
+  onLevelsChange,
   onSelect,
 }: {
   events: FloodEvent[];
@@ -55,6 +76,10 @@ export function EventRail({
   selectedId: number | null;
   running: boolean;
   lookbackDays: number;
+  /** Set only when the backend capped the list — how many matched before the cut. */
+  totalMatched: number | null;
+  levels: AlertLevel[];
+  onLevelsChange: (next: AlertLevel[]) => void;
   onSelect: (event: FloodEvent) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -82,8 +107,49 @@ export function EventRail({
           <h2 className="text-sm font-semibold">Active flood events</h2>
           <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
             <CalendarRange className="size-3" />
-            GDACS · Orange &amp; Red · last {lookbackDays} days
+            GDACS · last {lookbackDays} days
           </p>
+          <div className="mt-2 flex items-center gap-1" role="group" aria-label="Alert levels">
+            {ALERT_LEVELS.map((level) => {
+              const on = levels.includes(level);
+              // Never allow an empty selection: the backend treats "no levels" as its Orange+Red
+              // default, so an empty picker would silently show a filtered list anyway.
+              const isLastOn = on && levels.length === 1;
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  aria-pressed={on}
+                  disabled={isLastOn || running}
+                  title={isLastOn ? "Keep at least one level selected" : LEVEL_HINT[level]}
+                  onClick={() =>
+                    onLevelsChange(
+                      on ? levels.filter((l) => l !== level) : [...levels, level],
+                    )
+                  }
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ring-1 transition-colors",
+                    "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+                    on
+                      ? LEVEL_ON[level]
+                      : "bg-transparent text-muted-foreground ring-border hover:text-foreground",
+                    (isLastOn || running) && "cursor-not-allowed opacity-70",
+                  )}
+                >
+                  {level}
+                </button>
+              );
+            })}
+          </div>
+          {/* A capped list must say so, or ten rows read as "these are all of them". */}
+          {totalMatched ? (
+            <p
+              className="mt-1 text-[10px] text-amber-600 dark:text-amber-400"
+              title={`${totalMatched} events matched the window; showing the most urgent ${events.length}, ranked by alert level then recency.`}
+            >
+              Showing the {events.length} most urgent of {totalMatched} matched
+            </p>
+          ) : null}
         </div>
         {events.length > 4 ? (
           <div className="relative">
@@ -118,8 +184,10 @@ export function EventRail({
           />
         ) : events.length === 0 ? (
           <EmptyState
-            title="No events above threshold"
-            detail={`GDACS reports no Orange or Red flood events in the last ${lookbackDays} days. That is a real result, not a failure — nothing was substituted in its place.`}
+            title="No events at these levels"
+            detail={`GDACS reports no ${levels.join(" or ")} flood events in the last ${lookbackDays} days. That is a real result, not a failure — nothing was substituted in its place.${
+              levels.includes("Green") ? "" : " Most active floods are rated Green; add that level to widen the list."
+            }`}
           />
         ) : visible.length === 0 ? (
           <EmptyState title="No match" detail={`Nothing matches “${query}”.`} />

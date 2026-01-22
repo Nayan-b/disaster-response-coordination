@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from app import config
 from app.agents import llm
 from app.agents.graph import build_graph, default_checkpointer
 from app.models import AllocationAction, SourceUnavailable
@@ -91,7 +92,7 @@ def _lock_for(thread_id: str) -> threading.Lock:
 class StartRunRequest(BaseModel):
     event_id: int | None = Field(None, description="Work a specific GDACS event; omit to triage.")
     episode_id: int | None = None
-    lookback_days: int = 30
+    lookback_days: int = config.EVENTS_DEFAULT_LOOKBACK_DAYS
     alert_levels: list[str] = Field(default_factory=lambda: ["Orange", "Red"])
     reviewer: str = "responder"
 
@@ -133,6 +134,9 @@ def _public_state(values: dict[str, Any]) -> dict[str, Any]:
         "event", "extent", "population", "imagery", "tiles", "candidate_events",
         "claims", "fact_check", "recommendation", "approval", "unavailable",
         "engine", "status", "event_id", "episode_id",
+        # Supervision of the draft → fact-check loop. `repair_directive` is deliberately not
+        # exposed: it is prompt text, and the trace already carries what the reader needs.
+        "draft_attempts", "supervisor_outcome",
     )
     out = {k: _jsonable(values.get(k)) for k in keys}
     out["tool_calls"] = [
@@ -252,16 +256,33 @@ def health() -> dict[str, Any]:
 
 
 @app.get("/api/events")
-def list_events(days: int = 30, levels: str = "Orange,Red") -> dict[str, Any]:
-    """Flood events for the UI picker. Reports an empty result as data, not an error."""
+def list_events(
+    days: int = config.EVENTS_DEFAULT_LOOKBACK_DAYS,
+    levels: str = "Orange,Red",
+    limit: int = config.EVENTS_MAX_RESULTS,
+) -> dict[str, Any]:
+    """Flood events for the UI picker, most urgent first.
+
+    Reports an empty result as data, not an error — and reports a truncated one as truncated, so the
+    picker can say "10 of 23" rather than implying it is showing everything.
+    """
     runner = ToolRunner()
     result = runner.invoke(
         "list_flood_events",
-        {"days": days, "alert_levels": [x.strip() for x in levels.split(",") if x.strip()]},
+        {
+            "days": days,
+            "alert_levels": [x.strip() for x in levels.split(",") if x.strip()],
+            "max_events": limit,
+        },
     )
     if not result.get("ok"):
         return {"events": [], "unavailable": result.get("reason")}
-    return {"events": result["events"], "source": result.get("source")}
+    return {
+        "events": result["events"],
+        "total_matched": result.get("total_matched", len(result["events"])),
+        "truncated": bool(result.get("truncated")),
+        "source": result.get("source"),
+    }
 
 
 @app.post("/api/runs", response_model=StartRunResponse)

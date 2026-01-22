@@ -108,7 +108,12 @@ export function BriefPanel({
       ) : null}
 
       {recommendation ? (
-        <RecommendationView recommendation={recommendation} verifiedClaims={verified} />
+        <RecommendationView
+          recommendation={recommendation}
+          verifiedClaims={verified}
+          draftAttempts={state?.draft_attempts ?? null}
+          llmFallbackReason={state?.unavailable?.allocation_llm ?? null}
+        />
       ) : null}
     </div>
   );

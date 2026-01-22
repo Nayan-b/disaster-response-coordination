@@ -27,8 +27,9 @@ import "leaflet/dist/leaflet.css";
 import { formatArea, formatBbox } from "@/lib/format";
 import type { ExtentInfo, TileLayer } from "@/lib/types";
 
-const BASEMAP_URL = "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
-const BASEMAP_ATTRIBUTION = "© OpenStreetMap contributors, © CARTO";
+// CARTO's keyless raster tiles now render an "API KEY REQUIRED" watermark; OSM's need no key.
+const BASEMAP_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const BASEMAP_ATTRIBUTION = "© OpenStreetMap contributors";
 
 /** 1x1 transparent PNG — GIBS 404s tiles outside a layer's coverage, which is expected. */
 const BLANK_TILE =

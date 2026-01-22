@@ -8,7 +8,7 @@
  * tool call it was verified against — the citation is the point, not decoration.
  */
 
-import { CheckCircle2, CircleAlert, Cpu, Info } from "lucide-react";
+import { CheckCircle2, CircleAlert, Cpu, Info, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { SectionTitle } from "@/components/ui/data-display";
@@ -16,15 +16,38 @@ import { formatDateTime, formatMeasure } from "@/lib/format";
 import type { AllocationAction, Claim, Recommendation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export function EngineBadge({ draftedBy }: { draftedBy: string }) {
+/**
+ * Says which engine drafted this — and, when it is the rule-based one, *why*.
+ *
+ * Those are two different situations and conflating them is actively misleading: "no credentials
+ * configured" and "the configured model was tried and failed" look identical in the output but call
+ * for completely different responses from the reader. `fallbackReason` is
+ * `unavailable.allocation_llm`, which the drafter records when a configured provider errors.
+ */
+export function EngineBadge({
+  draftedBy,
+  fallbackReason,
+}: {
+  draftedBy: string;
+  fallbackReason?: string | null;
+}) {
   const ruleBased = draftedBy === "rule-based";
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       <Badge variant="outline" className="gap-1 font-mono text-[10px]">
         <Cpu className="size-3" />
         {draftedBy}
       </Badge>
-      {ruleBased ? (
+      {ruleBased && fallbackReason ? (
+        <Badge
+          variant="outline"
+          className="gap-1 border-amber-500/40 text-[10px] text-amber-700 dark:text-amber-400"
+          title={`The configured LLM was attempted and failed, so the deterministic path drafted this instead.\n\n${fallbackReason}`}
+        >
+          <TriangleAlert className="size-3" />
+          LLM failed — fell back
+        </Badge>
+      ) : ruleBased ? (
         <span
           className="text-[10px] text-muted-foreground"
           title="No LLM credentials are configured, so the deterministic drafting path produced this. The evidence and the guardrails are identical."
@@ -128,13 +151,34 @@ export function ActionList({
   );
 }
 
+/**
+ * Shown when the supervisor sent a blocked draft back. A reviewer should know this brief is the
+ * product of a correction rather than a first attempt — the trace has the detail.
+ */
+export function RepairBadge({ attempts }: { attempts: number }) {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 text-[10px]"
+      title={`The fact-check blocked an earlier draft. The supervisor sent it back with the rejection reasons; this is draft ${attempts}.`}
+    >
+      <RefreshCw className="size-3" />
+      redrafted · attempt {attempts}
+    </Badge>
+  );
+}
+
 export function RecommendationView({
   recommendation,
   verifiedClaims,
+  draftAttempts,
+  llmFallbackReason,
   showHeader = true,
 }: {
   recommendation: Recommendation;
   verifiedClaims: Claim[];
+  draftAttempts?: number | null;
+  llmFallbackReason?: string | null;
   showHeader?: boolean;
 }) {
   const claimById = new Map(verifiedClaims.map((claim) => [claim.claim_id, claim]));
@@ -150,7 +194,11 @@ export function RecommendationView({
             {recommendation.situation}
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[10px] text-muted-foreground">
-            <EngineBadge draftedBy={recommendation.drafted_by} />
+            <EngineBadge
+              draftedBy={recommendation.drafted_by}
+              fallbackReason={llmFallbackReason}
+            />
+            {draftAttempts && draftAttempts > 1 ? <RepairBadge attempts={draftAttempts} /> : null}
             <span>drafted {formatDateTime(recommendation.drafted_at)}</span>
           </div>
         </header>

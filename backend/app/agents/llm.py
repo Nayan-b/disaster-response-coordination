@@ -313,6 +313,24 @@ def _strip_code_fence(text: str) -> str:
     return body.strip()
 
 
+def _schema_support_hint(provider: str | None) -> str:
+    """Extra guidance when a reply ignores the schema we asked for.
+
+    OpenRouter lists `response_format` and `structured_outputs` as *separate* capabilities, and a
+    model can support the first without the second. Those models accept the request, return 200, and
+    emit whatever JSON — or prose — they like: the schema is never enforced. The symptom is therefore
+    inconsistent (unparseable text on one call, valid JSON with invented keys on the next) and in
+    both cases reads like a bug in this code rather than a model that cannot do the job.
+    """
+    if provider != PROVIDER_OPENROUTER:
+        return ""
+    return (
+        f" — check that {configured_model()!r} lists 'structured_outputs' in its "
+        "supported_parameters at https://openrouter.ai/api/v1/models. A model offering only "
+        "'response_format' does not enforce the schema and will always fail here."
+    )
+
+
 def structured_completion(
     model_cls: type[BaseModel],
     system: str,
@@ -347,13 +365,17 @@ def structured_completion(
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise LLMUnavailable(f"{provider}: response was not valid JSON: {exc.msg}") from exc
+        raise LLMUnavailable(
+            f"{provider}: response was not valid JSON: {exc.msg}"
+            f"{_schema_support_hint(provider)}"
+        ) from exc
 
     try:
         parsed = model_cls.model_validate(payload)
     except ValidationError as exc:
         raise LLMUnavailable(
             f"{provider}: response did not match {model_cls.__name__}: {exc}"
+            f"{_schema_support_hint(provider)}"
         ) from exc
 
     # Record what actually served the request, which may differ from what was asked for.

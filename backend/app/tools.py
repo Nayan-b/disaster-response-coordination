@@ -44,6 +44,7 @@ def _ok(data: dict[str, Any], provenance: Provenance | None = None) -> dict[str,
             payload["caveat"] = provenance.note
     return payload
 
+
 def _unavailable(reason: str, *, recoverable: bool = False) -> dict[str, Any]:
     """The shape every failure takes.
 
@@ -51,7 +52,12 @@ def _unavailable(reason: str, *, recoverable: bool = False) -> dict[str, Any]:
     report honestly. `ok: False` with a reason is the contract: an agent that reads this and then
     states a number anyway is making it up, and the Fact-Check agent will catch it.
     """
-    return {"ok": False, "unavailable": True, "reason": reason, "recoverable": recoverable}
+    return {
+        "ok": False,
+        "unavailable": True,
+        "reason": reason,
+        "recoverable": recoverable,
+    }
 
 
 @dataclass
@@ -110,7 +116,8 @@ def _event_summary(event) -> dict[str, Any]:
         "episode_id": event.episode_id,
         "name": event.name,
         "country": event.country,
-        "iso3_codes": [c.iso3 for c in event.affected_countries if c.iso3] or ([event.iso3] if event.iso3 else []),
+        "iso3_codes": [c.iso3 for c in event.affected_countries if c.iso3]
+        or ([event.iso3] if event.iso3 else []),
         "alert_level": event.alert_level,
         "episode_alert_level": event.episode_alert_level,
         "from_date": event.from_date.date().isoformat() if event.from_date else None,
@@ -122,9 +129,22 @@ def _event_summary(event) -> dict[str, Any]:
     }
 
 
+def _urgency_key(event) -> tuple[int, float]:
+    """Sort key: most severe alert level first, then the most recent event window.
+
+    This exists because the result cap truncates the *tail* of this ordering. GDACS does not return
+    events in severity order, so capping the raw list could drop a Red event and keep an Orange one
+    that happened to be listed first.
+    """
+    level = event.alert_level or ""
+    rank = gdacs.ALERT_LEVELS.index(level) + 1 if level in gdacs.ALERT_LEVELS else 0
+    return (rank, event.to_date.timestamp() if event.to_date else 0.0)
+
+
 def tool_list_flood_events(
-    days: int = 30,
+    days: int = config.EVENTS_DEFAULT_LOOKBACK_DAYS,
     alert_levels: Sequence[str] | None = None,
+    max_events: int = config.EVENTS_MAX_RESULTS,
     refresh: bool = False,
 ) -> dict[str, Any]:
     levels = tuple(alert_levels) if alert_levels else ("Orange", "Red")
@@ -135,23 +155,41 @@ def tool_list_flood_events(
             "This is a real result, not a failure.",
             recoverable=True,
         )
-    return _ok(
-        {
-            "event_count": len(events),
-            "events": [_event_summary(e) for e in events],
-        },
-        events[0].provenance,
-    )
+
+    ranked = sorted(events, key=_urgency_key, reverse=True)
+    returned = ranked[:max_events] if max_events and max_events > 0 else ranked
+
+    payload: dict[str, Any] = {
+        "event_count": len(returned),
+        "total_matched": len(events),
+        "events": [_event_summary(e) for e in returned],
+    }
+    # Never truncate silently. A caller looking at ten events must be able to tell whether that was
+    # all of them or the top of a longer list — otherwise a capped result reads as full coverage.
+    if len(returned) < len(events):
+        payload["truncated"] = True
+        payload["max_events"] = max_events
+        payload["note"] = (
+            f"{len(events)} events matched; returning the {len(returned)} most urgent, ranked by "
+            "alert level then recency. Raise max_events to see the rest."
+        )
+    return _ok(payload, events[0].provenance)
 
 
-def tool_get_flood_extent(event_id: int, episode_id: int | None = None) -> dict[str, Any]:
+def tool_get_flood_extent(
+    event_id: int, episode_id: int | None = None
+) -> dict[str, Any]:
     """Affected-area extent for an event. Returns the bbox and size, never the raw polygon.
 
     The polygon itself stays server-side (it is ~880 KB); the model gets a compact summary.
     """
-    episode = episode_id if episode_id is not None else gdacs.get_event(event_id).episode_id
+    episode = (
+        episode_id if episode_id is not None else gdacs.get_event(event_id).episode_id
+    )
     if episode is None:
-        return _unavailable(f"event {event_id} has no episode id, which GDACS geometry requires")
+        return _unavailable(
+            f"event {event_id} has no episode id, which GDACS geometry requires"
+        )
 
     extent = gdacs.get_flood_extent(event_id, episode)
     return _ok(
@@ -183,7 +221,9 @@ def tool_estimate_population(
         return _unavailable(f"event {event_id} has no episode id")
 
     extent = gdacs.get_flood_extent(event_id, episode)
-    codes = [c.iso3 for c in event.affected_countries if c.iso3] or ([event.iso3] if event.iso3 else [])
+    codes = [c.iso3 for c in event.affected_countries if c.iso3] or (
+        [event.iso3] if event.iso3 else []
+    )
     if not codes:
         return _unavailable(f"event {event_id} lists no affected country code")
 
@@ -234,7 +274,9 @@ def tool_search_flood_imagery(
             "granules": [
                 {
                     "granule_id": g.granule_id,
-                    "date": g.datetime_utc.date().isoformat() if g.datetime_utc else None,
+                    "date": (
+                        g.datetime_utc.date().isoformat() if g.datetime_utc else None
+                    ),
                     "format": g.data_format,
                     "href": g.data_href,
                 }
@@ -289,18 +331,34 @@ REGISTRY: dict[str, ToolSpec] = {
     "list_flood_events": ToolSpec(
         name="list_flood_events",
         description=(
-            "List active GDACS flood events with their alert level, country, and date window. "
-            "Call this first to discover which events exist. Returns a real empty result when no "
-            "events match — that is data, not an error."
+            "List active GDACS flood events with their alert level, country, and date window, "
+            "most urgent first. Call this first to discover which events exist. Returns at most "
+            "`max_events` events and reports `total_matched` so a capped list is never mistaken "
+            "for a complete one. Returns a real empty result when no events match — that is data, "
+            "not an error."
         ),
         input_schema={
             "type": "object",
             "properties": {
-                "days": {"type": "integer", "description": "Lookback window in days (default 30)."},
+                "days": {
+                    "type": "integer",
+                    "description": (
+                        "Lookback window in days "
+                        f"(default {config.EVENTS_DEFAULT_LOOKBACK_DAYS})."
+                    ),
+                },
                 "alert_levels": {
                     "type": "array",
                     "items": {"type": "string", "enum": list(gdacs.ALERT_LEVELS)},
                     "description": "Filter on the event's overall alert level. Default Orange+Red.",
+                },
+                "max_events": {
+                    "type": "integer",
+                    "description": (
+                        "Cap on how many events to return, most urgent first "
+                        f"(default {config.EVENTS_MAX_RESULTS}; 0 means no cap). A truncated "
+                        "result sets `truncated` and reports `total_matched`."
+                    ),
                 },
             },
         },
@@ -314,7 +372,11 @@ REGISTRY: dict[str, ToolSpec] = {
             "centroid and must never be used. Returns unavailable when GDACS published only a "
             "centroid for the event."
         ),
-        input_schema={"type": "object", "properties": dict(_EVENT_ARGS), "required": ["event_id"]},
+        input_schema={
+            "type": "object",
+            "properties": dict(_EVENT_ARGS),
+            "required": ["event_id"],
+        },
         fn=tool_get_flood_extent,
     ),
     "estimate_population": ToolSpec(
@@ -329,7 +391,10 @@ REGISTRY: dict[str, ToolSpec] = {
             "type": "object",
             "properties": {
                 **_EVENT_ARGS,
-                "year": {"type": "integer", "description": "WorldPop raster year (default 2020)."},
+                "year": {
+                    "type": "integer",
+                    "description": "WorldPop raster year (default 2020).",
+                },
             },
             "required": ["event_id"],
         },
@@ -346,7 +411,10 @@ REGISTRY: dict[str, ToolSpec] = {
             "type": "object",
             "properties": {
                 **_EVENT_ARGS,
-                "days": {"type": "integer", "description": "Search window in days (default 7)."},
+                "days": {
+                    "type": "integer",
+                    "description": "Search window in days (default 7).",
+                },
             },
             "required": ["event_id"],
         },
@@ -358,7 +426,11 @@ REGISTRY: dict[str, ToolSpec] = {
             "Get a NASA GIBS flood-imagery tile layer URL template for the map, dated to the "
             "event's window. Needs no network call and covers 2021 onward, so it always succeeds."
         ),
-        input_schema={"type": "object", "properties": dict(_EVENT_ARGS), "required": ["event_id"]},
+        input_schema={
+            "type": "object",
+            "properties": dict(_EVENT_ARGS),
+            "required": ["event_id"],
+        },
         fn=tool_get_tile_layer,
     ),
 }

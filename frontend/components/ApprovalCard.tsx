@@ -97,7 +97,10 @@ export function ApprovalCard({
           Paused — awaiting your decision
         </span>
         <span className="ml-auto flex items-center gap-2">
-          <EngineBadge draftedBy={recommendation.drafted_by} />
+          <EngineBadge
+            draftedBy={recommendation.drafted_by}
+            fallbackReason={request.unavailable?.allocation_llm ?? null}
+          />
         </span>
       </div>
 

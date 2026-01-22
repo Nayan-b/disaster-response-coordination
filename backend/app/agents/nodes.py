@@ -16,11 +16,13 @@ Every node appends to `trace`, which is what the UI streams as the reasoning tra
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app import config
 from app.agents import llm
 from app.agents.factcheck import strip_unverified, verify_claims
 from app.agents.state import FloodState, TraceEvent
@@ -33,6 +35,10 @@ from app.models import (
 from app.tools import ToolRunner
 
 ALERT_RANK = {"Red": 3, "Orange": 2, "Green": 1}
+
+# How many drafts one run may produce in total, including the first. The supervisor stops earlier
+# than this whenever a redraft fails for the same reason as the attempt before it.
+MAX_DRAFT_ATTEMPTS = int(os.environ.get("FLOOD_MAX_DRAFT_ATTEMPTS", "3"))
 
 
 def _trace(node: str, message: str, level: str = "info") -> TraceEvent:
@@ -71,10 +77,21 @@ def alert_monitor(state: FloodState) -> dict[str, Any]:
     what validates the model's choice — a triage pick outside the candidate set is discarded.
     """
     runner = _runner_from(state)
-    days = state.get("lookback_days") or 30
+    days = state.get("lookback_days") or config.EVENTS_DEFAULT_LOOKBACK_DAYS
     levels = state.get("alert_levels") or ["Orange", "Red"]
+    requested = state.get("event_id")
 
-    result = runner.invoke("list_flood_events", {"days": days, "alert_levels": levels})
+    result = runner.invoke(
+        "list_flood_events",
+        {
+            "days": days,
+            "alert_levels": levels,
+            # The cap exists to keep *triage* focused. A caller that already named an event is doing
+            # a lookup, not a triage, so it searches the whole matched set — otherwise a valid event
+            # sitting at position 11 would be reported as "not in the window".
+            "max_events": 0 if requested else config.EVENTS_MAX_RESULTS,
+        },
+    )
     trace = [_trace("alert_monitor", f"Queried GDACS for flood events, last {days} days, {levels}")]
 
     if not result.get("ok"):
@@ -87,8 +104,16 @@ def alert_monitor(state: FloodState) -> dict[str, Any]:
 
     candidates: list[dict[str, Any]] = result["events"]
     trace.append(_trace("alert_monitor", f"Found {len(candidates)} event(s) above threshold"))
+    if result.get("truncated"):
+        # Say it out loud: the model triages only what it can see, and so does the reader.
+        trace.append(
+            _trace(
+                "alert_monitor",
+                f"{result['total_matched']} matched in the window; triaging the "
+                f"{len(candidates)} most urgent (cap {result['max_events']})",
+            )
+        )
 
-    requested = state.get("event_id")
     chosen: dict[str, Any] | None = None
     if requested:
         chosen = next((e for e in candidates if e["event_id"] == requested), None)
@@ -348,11 +373,14 @@ def allocation_draft(state: FloodState) -> dict[str, Any]:
     claims = _build_claims(state)
     unavailable = dict(state.get("unavailable") or {})
     engine = llm.active_engine()
+    # Set by the supervisor when a previous draft was blocked. None on the first pass.
+    directive = state.get("repair_directive")
+    attempt = (state.get("draft_attempts") or 0) + 1
 
     draft: _Draft | None = None
     if llm.llm_available():
         try:
-            draft = _llm_draft(state, claims, unavailable)  # type: ignore[assignment]
+            draft = _llm_draft(state, claims, unavailable, directive)  # type: ignore[assignment]
             # Prefer the model that actually served the request: an OpenRouter request may be
             # routed to a different upstream than the one named, and `drafted_by` should say who
             # really wrote this rather than who was asked.
@@ -383,16 +411,20 @@ def allocation_draft(state: FloodState) -> dict[str, Any]:
         drafted_by=engine,
         drafted_at=datetime.now(UTC),
     )
+    attempt_note = f" (attempt {attempt}/{MAX_DRAFT_ATTEMPTS})" if attempt > 1 else ""
     return {
         "claims": claims,
         "recommendation": recommendation,
         "engine": engine,
         "unavailable": unavailable,
+        "draft_attempts": attempt,
+        # Consumed — clearing it keeps a stale directive from steering a later, unrelated redraft.
+        "repair_directive": None,
         "trace": [
             _trace(
                 "allocation_draft",
                 f"Drafted {len(recommendation.actions)} recommended action(s) via {engine} "
-                f"from {len(claims)} candidate claim(s)",
+                f"from {len(claims)} candidate claim(s){attempt_note}",
             )
         ],
         "status": "drafted",
@@ -491,7 +523,12 @@ def _evidence_block(claims: list[Claim]) -> str:
     )
 
 
-def _llm_draft(state: FloodState, claims: list[Claim], unavailable: dict[str, str]) -> _Draft:
+def _llm_draft(
+    state: FloodState,
+    claims: list[Claim],
+    unavailable: dict[str, str],
+    repair_directive: str | None = None,
+) -> _Draft:
     event = state.get("event") or {}
     user = (
         f"Flood event under review:\n{json.dumps(event, indent=1)}\n\n"
@@ -500,6 +537,10 @@ def _llm_draft(state: FloodState, claims: list[Claim], unavailable: dict[str, st
         f"{json.dumps(unavailable, indent=1) if unavailable else 'none'}\n\n"
         "Draft a resource-allocation recommendation for the human coordinator."
     )
+    if repair_directive:
+        # Appended last, after the evidence it is correcting, so the correction is the most recent
+        # thing in the turn rather than something the model has to remember from the top.
+        user += f"\n\n--- FACT-CHECK FEEDBACK ON YOUR PREVIOUS ATTEMPT ---\n{repair_directive}"
     return llm.structured_completion(  # type: ignore[return-value]
         _Draft, system=ALLOCATION_SYSTEM, user=user, effort="high"
     )
@@ -687,3 +728,128 @@ def fact_check(state: FloodState) -> dict[str, Any]:
     else:
         out["status"] = "awaiting_approval"
     return out
+
+
+# ---------------------------------------------------------------------------
+# 6. Supervisor
+# ---------------------------------------------------------------------------
+#
+# Borrowed from NVIDIA's AVO architecture (arXiv:2603.24517), which pairs an agent loop with a
+# supervisor that "monitors the broader trajectory for stagnation or repeated unproductive cycles
+# and can redirect the main agent". Only that component is adopted, and only here, because this is
+# the one place in this pipeline with a real fitness signal: the Fact-Check agent is a deterministic
+# pass/fail oracle, so a blocked draft can be re-attempted against genuine feedback rather than
+# against a proxy metric. The data-gathering stages keep their fixed call sequence — there is no
+# search problem there to explore.
+#
+# What this replaces: a blocked draft used to route straight to the action log, so the responder got
+# a "blocked" notice and nothing else. Now the drafter gets told exactly which claims failed and why,
+# and is asked again.
+
+
+def supervisor(state: FloodState) -> dict[str, Any]:
+    """Decide whether a fact-check-blocked draft is worth another attempt.
+
+    Three outcomes, and the two that stop are as important as the one that retries:
+
+    * ``retry``     — issue a directive naming the rejected claims and redraft.
+    * ``stagnant``  — this attempt was rejected for exactly the same claims as the last one, so the
+      loop is not converging. Stop now rather than spending the remaining budget proving it. The
+      rule-based drafter is deterministic and passes verification by construction, so if it ever
+      does block, the redraft is identical and this is the branch that catches it.
+    * ``exhausted`` — the attempt budget is spent.
+    """
+    fact = state.get("fact_check")
+    attempts = state.get("draft_attempts") or 1
+    rejected_ids = [c.claim_id for c in (fact.rejected_claims if fact else [])]
+    previous_ids = state.get("last_rejected_ids") or []
+
+    if previous_ids and set(rejected_ids) == set(previous_ids):
+        return {
+            "supervisor_outcome": "stagnant",
+            "status": "blocked_by_factcheck",
+            "trace": [
+                _trace(
+                    "supervisor",
+                    f"Attempt {attempts} failed on the same claim(s) as the previous attempt "
+                    f"({', '.join(rejected_ids)}) — redrafting is not converging, stopping",
+                    "error",
+                )
+            ],
+        }
+
+    if attempts >= MAX_DRAFT_ATTEMPTS:
+        return {
+            "supervisor_outcome": "exhausted",
+            "status": "blocked_by_factcheck",
+            "trace": [
+                _trace(
+                    "supervisor",
+                    f"Attempt budget spent ({attempts}/{MAX_DRAFT_ATTEMPTS}); the draft stays "
+                    "blocked and never reaches the responder",
+                    "error",
+                )
+            ],
+        }
+
+    directive = _repair_directive(fact, state)
+    return {
+        "supervisor_outcome": "retry",
+        "repair_directive": directive,
+        "last_rejected_ids": rejected_ids,
+        "status": "repairing",
+        "trace": [
+            _trace(
+                "supervisor",
+                f"Attempt {attempts}/{MAX_DRAFT_ATTEMPTS} blocked on "
+                f"{', '.join(rejected_ids) or 'no named claim'} — redrafting with those figures "
+                "withdrawn",
+                "warning",
+            )
+        ],
+    }
+
+
+def _repair_directive(fact: Any, state: FloodState) -> str:
+    """The instruction handed to the next draft.
+
+    Deliberately concrete: it names the claim ids that failed, quotes the reason verbatim, and lists
+    the only ids that may be cited. A vague "try again, be accurate" would give the model nothing to
+    act on and would burn the budget for nothing.
+    """
+    rejected = list(fact.rejected_claims) if fact else []
+    verified_ids = [c.claim_id for c in (fact.verified_claims if fact else [])]
+    unavailable = state.get("unavailable") or {}
+
+    lines = [
+        "YOUR PREVIOUS DRAFT WAS BLOCKED by the automatic fact-check and did not reach the "
+        "responder. Draft it again, and this time it must survive verification.",
+        "",
+        "Claims that were rejected — do not restate these figures in any form, including rounded, "
+        "approximated, or described in words:",
+    ]
+    for claim in rejected:
+        lines.append(f"  - {claim.claim_id}: {claim.rejection_reason}")
+
+    lines.append("")
+    if verified_ids:
+        lines.append(
+            "The ONLY claim ids you may cite are: " + ", ".join(verified_ids) + ". "
+            "Any number not drawn from one of these will be rejected again."
+        )
+    else:
+        lines.append(
+            "No claim survived verification, so this recommendation must contain NO numbers at "
+            "all. Describe what is known qualitatively and state plainly that the figures are "
+            "unavailable."
+        )
+
+    for role, reason in unavailable.items():
+        lines.append(f"Unavailable — {role}: {reason}. State this as a caveat; do not estimate it.")
+
+    lines.append("")
+    lines.append(
+        "A recommendation with fewer actions and no unsourced figures is correct. A recommendation "
+        "that restates a rejected number is worse than no recommendation at all."
+    )
+    return "\n".join(lines)

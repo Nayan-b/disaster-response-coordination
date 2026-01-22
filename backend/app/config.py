@@ -18,7 +18,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 CACHE_DIR = Path(os.environ.get("FLOOD_CACHE_DIR", REPO_ROOT / "data" / "cache"))
 
-CACHE_DISABLED = os.environ.get("FLOOD_CACHE_DISABLED", "").lower() in {"1", "true", "yes"}
+CACHE_DISABLED = os.environ.get("FLOOD_CACHE_DISABLED", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +52,9 @@ TTL_GDACS_GEOMETRY = int(os.environ.get("FLOOD_TTL_GDACS_GEOMETRY", 24 * 60 * 60
 
 TTL_CMR_STAC = int(os.environ.get("FLOOD_TTL_CMR_STAC", 60 * 60))
 
-TTL_WORLDPOP_METADATA = int(os.environ.get("FLOOD_TTL_WORLDPOP_METADATA", 7 * 24 * 60 * 60))
+TTL_WORLDPOP_METADATA = int(
+    os.environ.get("FLOOD_TTL_WORLDPOP_METADATA", 7 * 24 * 60 * 60)
+)
 
 # WorldPop rasters are static annual products — never expire them.
 TTL_PERMANENT = None
@@ -57,6 +63,13 @@ TTL_PERMANENT = None
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+# Event-list defaults. The lookback window is short on purpose: GDACS flood events stay in the
+# list for weeks after their window closes, so a wide window buries what is happening now under
+# events that have already passed. The result cap keeps triage focused on the most urgent handful —
+# it is applied *after* ranking by alert level, and a truncated listing always says so.
+EVENTS_DEFAULT_LOOKBACK_DAYS = int(os.environ.get("FLOOD_EVENTS_LOOKBACK_DAYS", "5"))
+EVENTS_MAX_RESULTS = int(os.environ.get("FLOOD_EVENTS_MAX_RESULTS", "10"))
 
 GDACS_EVENTLIST_URL = "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH"
 GDACS_GEOMETRY_URL = "https://www.gdacs.org/gdacsapi/api/polygons/getgeometry"
